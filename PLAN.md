@@ -2,7 +2,7 @@
 
 ## 現在の状態
 
-Phase 0（設計）を完了し、ユーザーの設計レビュー待ち。Phase 1の実装はまだ開始しない。
+Phase 0（設計）を完了し、Phase 1（ローカル開発環境）の実装・動作確認を完了した。Phase 2（Database）の開始前にPhase 1の学習内容を確認する。
 
 ## 作業ルール
 
@@ -37,12 +37,18 @@ Gate:
 - Decision Requiredの項目をユーザーが確認する。
 - 実装開始を明示的に承認する。
 
+Phase 0 Gate: 完了。ユーザーのPhase 1着手指示を受けて実装した。
+
 ### Phase 1: Local Environment
 
 1. Docker ComposeでPostgreSQLだけを起動する。
 2. HonoのGET /healthを追加する。
 3. DB接続healthを追加する。
 4. 起動・停止・接続失敗を確認し、phase-01.mdを作る。
+
+Status: 完了。TDD、typecheck、build、Docker PostgreSQL、APIとDBの正常系・障害系を確認済み。
+
+次のGate: ユーザーがPhase 1の実装と学習記録を確認する。
 
 ### Phase 2: Database
 
