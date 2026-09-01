@@ -52,7 +52,8 @@
 
 ## Phase 2: Database
 
-- 作るもの: migrations、statements、transactions、制約、最小Repository。
+- 実装・動作確認・学習記録まで完了。作業ブランチ: `phase-02/database`。
+- 作ったもの: migrations、statements、transactions、制約、最小Repository。
 - 必要性: 状態遷移と整合性の土台を作る。
 - 内部処理: migration -> schema -> parameterized query -> transaction。
 - 選択肢: pg + SQL、Kysely、Prisma。推奨はpg + SQL。

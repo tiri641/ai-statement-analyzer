@@ -58,6 +58,10 @@ Status: 完了。TDD、typecheck、build、Docker PostgreSQL、APIとDBの正常
 4. Repositoryのinsert / state updateを追加する。
 5. rollback、duplicate、FK failureをテストする。
 
+Status: 実装・動作確認完了。Migration、Schema制約、Index、Repository、DB Transactionを追加し、ローカルPostgreSQLで20件のテストに成功した。
+
+次のGate: Phase 2のMigration、制約、Transaction、学習記録を確認する。
+
 ### Phase 3: API
 
 1. Honoのrequest / response型とZodを追加する。
