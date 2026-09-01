@@ -4,7 +4,7 @@
 
 クレジットカード明細画像をS3へ直接アップロードし、SQS経由のECS WorkerがAmazon BedrockでOCR・merchant正規化・カテゴリ分類を行う学習用アプリケーションである。PostgreSQLを数値の正とし、SQL AnalyticsをBedrockが解釈してAI Insightsを作る。
 
-現在はPhase 0の設計段階であり、ユーザーの設計承認後にPhase 1のコード実装を開始する。
+Phase 1のローカル開発環境を実装済み。次のPhaseへ進む前に、Phase 1の学習記録と動作結果を確認する。
 
 ## Architecture
 
@@ -32,17 +32,28 @@ Frontend
 - Frontend候補: Vite + React + TypeScript（Decision Required）
 - Infrastructure: AWS CDK + TypeScript
 
-## Local Setup
+## ローカル環境
 
-Phase 1でDocker Compose、PostgreSQL、Hono APIを追加する。現時点では実装開始前のため、実行コマンドは未確定である。
+APIはホストのNode.jsで起動し、PostgreSQLだけをDocker Composeで起動する。
 
-予定:
+必要な環境:
 
-1. Node.jsのversionを固定する。
-2. dependencyをinstallする。
-3. Docker ComposeでPostgreSQLを起動する。
-4. migrationを実行する。
-5. APIとWorkerを別processで起動する。
+1. Node.js v24系
+2. npm
+3. Docker EngineとDocker Compose
+
+起動手順:
+
+1. `cp .env.example .env`
+2. `npm install`
+3. `docker compose up -d db`
+4. `npm run api`
+5. 別の端末で `curl http://127.0.0.1:3000/health`
+6. `curl http://127.0.0.1:3000/health/db`
+
+開発中は `npm run dev` も使用できる。DBを停止する場合は `docker compose stop db`、終了する場合は `docker compose down`を使う。`docker compose down -v`はNamed Volumeを削除するため、意図的なデータ削除時以外は使用しない。
+
+Phase 1ではmigration、業務テーブル、AWSサービスはまだ追加していない。
 
 ## Environment Variables
 
@@ -64,7 +75,7 @@ Phase 1でDocker Compose、PostgreSQL、Hono APIを追加する。現時点で�
 
 ## Migration / API / Worker
 
-migration、API起動、Worker起動の正式なscriptはPhase 1〜6で追加する。APIとWorkerはMVPでは同じimageを共有し、commandでprocessを切り替える案を推奨する。
+migrationはPhase 2、Worker起動はPhase 6で追加する。APIとWorkerはMVPでは同じimageを共有し、commandでprocessを切り替える案を推奨する。
 
 APIの契約は [API_DESIGN.md](API_DESIGN.md)、WorkerとSQSの説明は [docs/worker.md](docs/worker.md) と [docs/sqs.md](docs/sqs.md) にある。
 
@@ -80,10 +91,10 @@ Phase 13でCDKを追加し、VPC、ALB、ECS、RDS、S3、SQS、DLQ、IAM、Clou
 
 S3 Block Public Access、短期Presigned URL、HTTPS、Private RDS、Security Group、Secrets Manager、IAM Role分離、構造化ログのmasking、S3 Lifecycleを必須とする。認証なしのMVPをインターネットへ公開しない。
 
-## Learning Process
+## 学習プロセス
 
 各Phaseで「説明 -> 小実装 -> 動作確認 -> 理解整理 -> 次Phase」の順序を守る。[LEARNING_PLAN.md](LEARNING_PLAN.md) と [learning/phase-00.md](learning/phase-00.md) を起点にする。
 
-## Design Review
+## 設計レビュー
 
-Phase 1開始前に、特にBedrock Model、DB Library、Frontend、NAT / Endpoint、Insights API、Image共有、Worker scaling、S3 retention、認証のDecision Requiredを承認する。
+Phase 1は完了した。Phase 2へ進む前に、Phase 1の実装・テスト・学習記録を確認する。Bedrock Model、DB Library、Frontend、NAT / Endpoint、Insights API、Image共有、Worker scaling、S3 retention、認証の設計判断は後続Phaseで使用する。

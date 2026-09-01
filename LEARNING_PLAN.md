@@ -13,7 +13,7 @@
 
 ユーザーによる設計承認まではPhase 1のコードを作らない。各Phaseの実施後に learning/phase-XX.md を作成し、未実施のPhaseの学習記録を先に捏造しない。
 
-## Phase 0: Design（現在のPhase）
+## Phase 0: Design（完了）
 
 ### 開始前に説明すること
 
@@ -28,7 +28,7 @@
 - 8つのルート設計書があり、Decision Requiredが明示されている。
 - MermaidでAWS、Upload、OCR、Retry、Analytics sequenceを説明できる。
 - AWSの現行仕様・料金・Bedrock model確認日が記録されている。
-- ユーザーが設計をレビューし、Phase 1開始を承認する。
+- ユーザーが設計をレビューし、Phase 1開始を承認する。完了済み。
 
 ### 理解確認（回答付き）
 
@@ -39,6 +39,8 @@
 5. なぜInsights APIを分けるのか。Bedrockの遅延・費用・失敗を数値Dashboardから分離し、cacheできるため。
 
 ## Phase 1: Local Environment
+
+実装・動作確認・学習記録まで完了。次のPhaseへ進む前に、Phase 1の理解確認を行う。
 
 - 作るもの: Docker ComposeのPostgreSQLと最小Hono health API。
 - 必要性: AWSへ出す前にHTTP、DB接続、環境変数、ログの基本を安定させる。
