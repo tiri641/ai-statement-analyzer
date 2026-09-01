@@ -4,7 +4,7 @@
 
 クレジットカード明細画像をS3へ直接アップロードし、SQS経由のECS WorkerがAmazon BedrockでOCR・merchant正規化・カテゴリ分類を行う学習用アプリケーションである。PostgreSQLを数値の正とし、SQL AnalyticsをBedrockが解釈してAI Insightsを作る。
 
-Phase 1のローカル開発環境を実装済み。次のPhaseへ進む前に、Phase 1の学習記録と動作結果を確認する。
+Phase 2までのローカル開発環境とDatabaseを実装済み。次のPhaseへ進む前に、Phase 2の学習記録と動作結果を確認する。
 
 ## Architecture
 
@@ -47,13 +47,14 @@ APIはホストのNode.jsで起動し、PostgreSQLだけをDocker Composeで起�
 1. `cp .env.example .env`
 2. `npm install`
 3. `docker compose up -d db`
-4. `npm run api`
-5. 別の端末で `curl http://127.0.0.1:3000/health`
-6. `curl http://127.0.0.1:3000/health/db`
+4. `npm run migrate`
+5. `npm run api`
+6. 別の端末で `curl http://127.0.0.1:3000/health`
+7. `curl http://127.0.0.1:3000/health/db`
 
 開発中は `npm run dev` も使用できる。DBを停止する場合は `docker compose stop db`、終了する場合は `docker compose down`を使う。`docker compose down -v`はNamed Volumeを削除するため、意図的なデータ削除時以外は使用しない。
 
-Phase 1ではmigration、業務テーブル、AWSサービスはまだ追加していない。
+Phase 2でMigrationと業務テーブルを追加した。AWSサービスはまだ追加していない。
 
 ## Environment Variables
 
@@ -75,7 +76,13 @@ Phase 1ではmigration、業務テーブル、AWSサービスはまだ追加し�
 
 ## Migration / API / Worker
 
-migrationはPhase 2、Worker起動はPhase 6で追加する。APIとWorkerはMVPでは同じimageを共有し、commandでprocessを切り替える案を推奨する。
+MigrationはPhase 2で追加した。PostgreSQLを起動した後、次のコマンドで適用する。
+
+```bash
+npm run migrate
+```
+
+Worker起動はPhase 6で追加する。APIとWorkerはMVPでは同じimageを共有し、commandでprocessを切り替える案を推奨する。
 
 APIの契約は [API_DESIGN.md](API_DESIGN.md)、WorkerとSQSの説明は [docs/worker.md](docs/worker.md) と [docs/sqs.md](docs/sqs.md) にある。
 
@@ -97,4 +104,4 @@ S3 Block Public Access、短期Presigned URL、HTTPS、Private RDS、Security Gr
 
 ## 設計レビュー
 
-Phase 1は完了した。Phase 2へ進む前に、Phase 1の実装・テスト・学習記録を確認する。Bedrock Model、DB Library、Frontend、NAT / Endpoint、Insights API、Image共有、Worker scaling、S3 retention、認証の設計判断は後続Phaseで使用する。
+Phase 1とPhase 2は完了した。Phase 3へ進む前に、Phase 2の実装・テスト・学習記録を確認する。Bedrock Model、Frontend、NAT / Endpoint、Insights API、Image共有、Worker scaling、S3 retention、認証の設計判断は後続Phaseで使用する。
