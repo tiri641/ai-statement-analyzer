@@ -87,7 +87,6 @@ npm run migrate
 ```
 
 常駐WorkerはPhase 6で追加した。`npm run worker`で起動し、`SQS_QUEUE_URL`のQueueをLong Pollingする。Phase 5の確認用Consumerは、1件だけを受信・Validation・削除する`npm run consume:analyze`である。APIとWorkerはMVPでは同じimageを共有し、commandでprocessを切り替える案を推奨する。
-
 Phase 7のFake ClientテストはAWSへ接続しない。認証済みのAWS環境で合成画像を使ったBedrock接続を確認する場合は、`npm run bedrock:ocr:smoke`を実行する。スモークコマンドはOCRの件数とtoken usageだけを出力し、画像やmerchant・金額は出力しない。
 
 APIの契約は [API_DESIGN.md](API_DESIGN.md)、WorkerとSQSの説明は [docs/worker.md](docs/worker.md) と [docs/sqs.md](docs/sqs.md) にある。
