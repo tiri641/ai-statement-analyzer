@@ -70,7 +70,7 @@ SIGTERMまたはSIGINTでShutdownを要求する。
 5. 処理成功後にDeleteMessageする。
 6. Workerを終了する。
 
-処理関数の実行中にShutdown要求が来ても、処理とDeleteMessageの完了を待つ。ECSのTask Definitionへ`stopTimeout=30秒`を設定する作業はPhase 13で行う。
+処理関数の実行中にShutdown要求が来ても、通常は処理とDeleteMessageの完了を待つ。ただしShutdown要求後30秒を経過しても完了しない場合は、DeleteMessageを行わずに終了してSQSの再配送に任せる。処理関数にはAbortSignalを渡し、後続Phaseで処理を協調停止できるようにした。ECSのTask Definitionへ`stopTimeout=30秒`を設定する作業はPhase 13で行う。
 
 ## 5. 障害時の挙動
 
@@ -82,7 +82,7 @@ SIGTERMまたはSIGINTでShutdownを要求する。
 | 処理関数の失敗 | ログ、削除せず継続 | Visibility Timeout後に再配送される |
 | DeleteMessageの失敗 | ログ、Workerは継続 | Messageは削除されず、後で再配送される |
 | Receive中にSIGTERM | ReceiveをAbortして終了 | 受信中Messageは処理されていないため、削除されない |
-| 処理中にSIGTERM | 処理とDeleteを待って終了 | 成功したMessageだけ削除される |
+| 処理中にSIGTERM | 通常は処理とDeleteを待つ。30秒超過時は削除せず終了 | 完了したMessageだけ削除され、タイムアウトしたMessageは再配送される |
 
 SQS Standard Queueでは重複配送があり得る。したがって、後続PhaseでS3取得やDB保存を追加するときは、同じMessageが複数回処理されても安全な冪等性が必要になる。
 
@@ -133,7 +133,7 @@ DeleteするとSQSからMessageが消え、処理が完了していなくても�
 
 ### Q4. SIGTERMをReceive中と処理中に受けたらどうなるか？
 
-Receive中ならAbortControllerでLong Pollingを中断して、新しい受信を行わず終了する。処理中なら処理とDeleteMessageの完了を待って終了する。これにより、処理済みなのにACKしない状態を減らす。
+Receive中ならAbortControllerでLong Pollingを中断して、新しい受信を行わず終了する。処理中なら通常は処理とDeleteMessageの完了を待って終了するが、30秒を超える場合は削除せず終了する。これにより、処理済みなのにACKしない状態を減らしつつ、Workerが永久に停止しない状態も避ける。
 
 ### Q5. Heartbeatはなぜ必要で、なぜPhase 6では実装しないのか？
 

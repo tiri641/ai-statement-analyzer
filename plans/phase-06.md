@@ -45,7 +45,7 @@ DeleteMessage
 
 ## Graceful Shutdown
 
-SIGTERM / SIGINTを受信したら、Shutdown状態に変更して新しいReceiveMessageを開始しない。Long Polling中ならAbortControllerで中断する。すでにMessageを受信して処理中なら、処理とDeleteMessageの完了を待って終了する。
+SIGTERM / SIGINTを受信したら、Shutdown状態に変更して新しいReceiveMessageを開始しない。Long Polling中ならAbortControllerで中断する。すでにMessageを受信して処理中なら、通常は処理とDeleteMessageの完了を待って終了する。Shutdown要求後30秒経過しても完了しない場合は、削除せずに終了してSQSの再配送に任せる。
 
 ECS Fargateの`stopTimeout`は2〜120秒の範囲で設定できる。Phase 6では30秒を目標とし、ECSへの明示的な設定はPhase 13で行う。
 

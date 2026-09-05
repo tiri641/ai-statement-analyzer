@@ -110,7 +110,7 @@ Status: 実装完了。SQS Standard Queue、DLQ、`POST /statements/{id}/analyze
 3. SIGTERMで受信停止・処理完了待ちを追加する。
 4. heartbeat / stopTimeoutの設計を確認する。
 
-Status: 実装・動作確認完了。常駐Worker、1件ずつの処理、処理成功後のDeleteMessage、Receiveエラーの指数バックオフ、AbortControllerによるLong Polling中断、SIGTERM / SIGINTのGraceful Shutdown、Fake Queueを使ったTDDテストを追加した。S3、Bedrock、DB保存、Heartbeat、ECS `stopTimeout`設定は後続Phaseで扱う。
+Status: 実装・動作確認完了。常駐Worker、1件ずつの処理、処理成功後のDeleteMessage、Receiveエラーの指数バックオフ、AbortControllerによるLong Polling中断、SIGTERM / SIGINTのGraceful Shutdown、処理中Jobの30秒タイムアウト、Fake Queueを使ったTDDテストを追加した。S3、Bedrock、DB保存、Heartbeat、ECS `stopTimeout`設定は後続Phaseで扱う。
 
 学習記録は[plans/phase-06.md](plans/phase-06.md)と[learning/phase-06.md](learning/phase-06.md)に記録する。
 

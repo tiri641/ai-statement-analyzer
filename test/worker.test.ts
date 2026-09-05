@@ -230,6 +230,35 @@ test("WorkerはReceiveエラー後にバックオフして受信を継続する"
   assert.deepEqual(backoffValues, [1_000]);
 });
 
+test("WorkerはReceive成功後にバックオフを1秒へ戻す", async () => {
+  let worker!: AnalyzeWorker;
+  let receiveCount = 0;
+  const backoffValues: number[] = [];
+  const queue = createQueue({
+    receiveOne: async () => {
+      receiveCount += 1;
+      if (receiveCount === 1 || receiveCount === 3) {
+        throw new Error("temporary network error");
+      }
+      if (receiveCount === 4) {
+        worker.requestShutdown();
+      }
+      return null;
+    },
+  });
+  worker = new AnalyzeWorker({
+    queue,
+    handleJob: async () => undefined,
+    sleep: async (milliseconds) => {
+      backoffValues.push(milliseconds);
+    },
+  });
+
+  await worker.run();
+
+  assert.deepEqual(backoffValues, [1_000, 1_000]);
+});
+
 test("WorkerのReceiveエラーのバックオフは30秒を上限にする", async () => {
   let worker!: AnalyzeWorker;
   let receiveCount = 0;
@@ -285,6 +314,67 @@ test("Workerはバックオフ中のShutdownで次のReceiveを開始しない",
   await worker.run();
 
   assert.equal(receiveCount, 1);
+});
+
+test("WorkerはShutdown後の処理が長引いたら削除せず終了する", async () => {
+  let worker!: AnalyzeWorker;
+  let deleteCount = 0;
+  let handlerSignal: AbortSignal | undefined;
+  const { events, logger } = createLogger();
+  const queue = createQueue({
+    receiveOne: async () => createJob(),
+    deleteMessage: async () => {
+      deleteCount += 1;
+    },
+  });
+  worker = new AnalyzeWorker({
+    queue,
+    logger,
+    shutdownTimeoutMs: 10,
+    handleJob: async (_job, options) => {
+      handlerSignal = options?.signal;
+      worker.requestShutdown();
+      await new Promise<void>(() => undefined);
+    },
+  });
+
+  await worker.run();
+
+  assert.equal(deleteCount, 0);
+  assert.equal(handlerSignal?.aborted, true);
+  assert.equal(
+    events.some(({ fields }) => fields.event === "worker_job_shutdown_timeout"),
+    true,
+  );
+});
+
+test("WorkerはShutdown後のDeleteが長引いたら終了して再配送に任せる", async () => {
+  let worker!: AnalyzeWorker;
+  let deleteCount = 0;
+  const { events, logger } = createLogger();
+  const queue = createQueue({
+    receiveOne: async () => createJob(),
+    deleteMessage: async () => {
+      deleteCount += 1;
+      await new Promise<void>(() => undefined);
+    },
+  });
+  worker = new AnalyzeWorker({
+    queue,
+    logger,
+    shutdownTimeoutMs: 10,
+    handleJob: async () => {
+      worker.requestShutdown();
+    },
+  });
+
+  await worker.run();
+
+  assert.equal(deleteCount, 1);
+  assert.equal(
+    events.some(({ fields }) => fields.event === "worker_delete_shutdown_timeout"),
+    true,
+  );
 });
 
 test("Workerは不正Messageを削除せずLoopを継続する", async () => {

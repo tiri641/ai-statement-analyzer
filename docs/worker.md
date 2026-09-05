@@ -33,7 +33,7 @@ DeleteMessage
 
 処理関数が失敗した場合はDeleteMessageを呼ばない。Deleteに失敗した場合もMessageは削除されたとみなさない。SQSのVisibility Timeoutが切れるとMessageが再配送されるため、後続Phaseの業務処理は重複実行に耐えられる必要がある。
 
-不正Messageも削除しない。既存のQueueアダプターがValidationエラーを返し、Workerはエラーを記録してLoopを継続する。再配送を繰り返したMessageは、Queueの`maxReceiveCount`を超えるとDLQへ移動する。
+不正Messageも削除しない。既存のQueueアダプターがValidationエラーを返し、Workerはエラーを記録してLoopを継続する。再配送を繰り返したMessageは、Queueの`maxReceiveCount`に設定した回数まで受信されるとDLQへ移動する。
 
 ## エラー処理
 
@@ -56,7 +56,7 @@ SIGTERM / SIGINTを受信すると、WorkerはShutdownを要求する。
 5. 処理成功後にDeleteMessageする。
 6. Workerを終了する。
 
-処理関数の実行中にSIGTERMを受信した場合は、処理とDeleteMessageの完了を待つ。実際のECS Task Definitionで`stopTimeout=30秒`を指定するのはPhase 13で行う。
+処理関数の実行中にSIGTERMを受信した場合は、通常は処理とDeleteMessageの完了を待つ。ただし、Shutdown要求後に30秒経過しても処理またはDeleteMessageが完了しない場合は、削除せずにWorkerを終了する。MessageはSQSで再配送される。処理関数にはAbortSignalを渡しており、後続PhaseではこのSignalをS3・Bedrock・DB処理の停止に利用する。実際のECS Task Definitionで`stopTimeout=30秒`を指定するのはPhase 13で行う。
 
 ## 後続PhaseのWorker処理
 

@@ -4,7 +4,7 @@
 
 event、timestamp、service、requestId、statementId、messageId、status、durationMs、receiveCount、errorCode、modelId、promptVersionをJSONで出す。カード番号、画像、Presigned URL、raw prompt / responseは出さない。
 
-Phase 6 Workerでは、`worker_started`、`worker_job_started`、`worker_job_handler_recorded`、`worker_job_completed`、`worker_job_failed`、`worker_delete_failed`、`worker_receive_failed`、`worker_message_invalid`、`worker_shutdown_requested`、`worker_stopped`を記録する。エラー本文やReceipt Handleは記録しない。
+Phase 6 Workerでは、`worker_started`、`worker_job_started`、`worker_job_handler_recorded`、`worker_job_completed`、`worker_job_failed`、`worker_job_shutdown_timeout`、`worker_delete_failed`、`worker_delete_shutdown_timeout`、`worker_receive_failed`、`worker_message_invalid`、`worker_shutdown_requested`、`worker_stopped`を記録する。エラー本文やReceipt Handleは記録しない。
 
 ## MVP metrics / alarms
 
