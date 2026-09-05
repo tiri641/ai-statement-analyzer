@@ -2,10 +2,49 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { SQSClient } from "@aws-sdk/client-sqs";
 import { InvalidAnalyzeJobMessageError } from "../src/queue/analyze-job.ts";
+import { consumeOneAnalyzeJob } from "../src/queue/analyze-job-consumer.ts";
 import { SqsJobQueue } from "../src/queue/sqs-job-queue.ts";
 
 const queueUrl = "https://sqs.ap-northeast-1.amazonaws.com/123456789012/analyze";
 const statementId = "019abc00-0000-7000-8000-000000000001";
+
+test("最小Consumerは受信したMessageを処理後に削除する", async () => {
+  let deletedReceiptHandle: string | undefined;
+  const result = await consumeOneAnalyzeJob({
+    sendAnalyzeJob: async () => undefined,
+    receiveOne: async () => ({
+      messageId: "message-1",
+      receiptHandle: "receipt-1",
+      statementId,
+      receiveCount: 1,
+    }),
+    deleteMessage: async (receiptHandle) => {
+      deletedReceiptHandle = receiptHandle;
+    },
+  });
+
+  assert.deepEqual(result, {
+    status: "DELETED",
+    messageId: "message-1",
+    statementId,
+    receiveCount: 1,
+  });
+  assert.equal(deletedReceiptHandle, "receipt-1");
+});
+
+test("最小ConsumerはMessageがなければ削除しない", async () => {
+  let deleted = false;
+  const result = await consumeOneAnalyzeJob({
+    sendAnalyzeJob: async () => undefined,
+    receiveOne: async () => null,
+    deleteMessage: async () => {
+      deleted = true;
+    },
+  });
+
+  assert.deepEqual(result, { status: "EMPTY" });
+  assert.equal(deleted, false);
+});
 
 test("SqsJobQueueはstatementIdだけをMessage bodyへ入れて送信する", async () => {
   let commandInput: Record<string, unknown> | undefined;

@@ -47,6 +47,8 @@ SQS ReceiveMessage
 
 `src/queue/sqs-job-queue.ts`がAWS SDK v3の`SendMessageCommand`、`ReceiveMessageCommand`、`DeleteMessageCommand`を隠し、APIとConsumerは`AnalyzeJobQueue`インターフェースを使う。テストではFake clientを注入する。
 
+Phase 5の確認用Consumerは`src/queue/analyze-job-consumer.ts`の`consumeOneAnalyzeJob`である。`npm run consume:analyze`を実行すると、最大1件を受信し、Validation済みのMessageだけをReceiptHandleで削除する。これは常駐Workerではなく、ECS WorkerのLong PollingループはPhase 6で実装する。
+
 ## RetryとDLQ
 
 Phase 5のConsumerがMessageを削除しないと、Visibility Timeout後に再配送される。3回目の受信後も削除されなければ、redrive policyによってDLQへ移動する。DLQは通常処理から隔離された調査対象であり、移動しただけで問題が解決したことにはならない。

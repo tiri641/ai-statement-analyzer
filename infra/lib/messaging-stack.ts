@@ -24,8 +24,9 @@ export class MessagingStack extends cdk.Stack {
       encryption: sqs.QueueEncryption.SQS_MANAGED,
       enforceSSL: true,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
-      // Queue ARNをsource queueへ渡すとStack内で循環参照になり得るため、
-      // Phase 5ではALLOW_ALLを明示し、実行Roleの権限で利用者を制限する。
+      // CDK生成名のQueue ARNをsource queueへ渡すとStack内で循環参照になり得るため、
+      // Phase 5ではALLOW_ALLを明示する。これはIAM認可とは別の設定であり、
+      // 任意のQueueに広く許可する点は既知の制限としてPhase 13で再検討する。
       redriveAllowPolicy: {
         redrivePermission: sqs.RedrivePermission.ALLOW_ALL,
       },

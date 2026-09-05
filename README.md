@@ -47,11 +47,12 @@ APIはホストのNode.jsで起動し、PostgreSQLだけをDocker Composeで起�
 1. `cp .env.example .env`
 2. `npm install`
 3. `docker compose up -d db`
-4. Phase 4のAPIを起動するには、`npm run cdk:deploy:storage`を実行し、Outputの`S3BucketName`を`.env`の`S3_BUCKET_NAME`へ設定する
-5. `npm run migrate`
-6. `npm run api`
-7. 別の端末で `curl http://127.0.0.1:3000/health`
-8. `curl http://127.0.0.1:3000/health/db`
+4. `npm run cdk:deploy:storage`を実行し、Outputの`S3BucketName`を`.env`の`S3_BUCKET_NAME`へ設定する
+5. `npm run cdk:deploy:messaging`を実行し、Outputの`AnalyzeQueueUrl`を`.env`の`SQS_QUEUE_URL`へ設定する
+6. `npm run migrate`
+7. `npm run api`
+8. 別の端末で `curl http://127.0.0.1:3000/health`
+9. `curl http://127.0.0.1:3000/health/db`
 
 開発中は `npm run dev` も使用できる。DBを停止する場合は `docker compose stop db`、終了する場合は `docker compose down`を使う。`docker compose down -v`はNamed Volumeを削除するため、意図的なデータ削除時以外は使用しない。
 
@@ -85,13 +86,15 @@ MigrationはPhase 2で追加した。PostgreSQLを起動した後、次のコマ
 npm run migrate
 ```
 
-Worker起動はPhase 6で追加する。APIとWorkerはMVPでは同じimageを共有し、commandでprocessを切り替える案を推奨する。
+ECS WorkerはPhase 6で追加する。Phase 5では、1件だけを受信・Validation・削除する確認用Consumerを`npm run consume:analyze`で実行できる。APIとWorkerはMVPでは同じimageを共有し、commandでprocessを切り替える案を推奨する。
 
 APIの契約は [API_DESIGN.md](API_DESIGN.md)、WorkerとSQSの説明は [docs/worker.md](docs/worker.md) と [docs/sqs.md](docs/sqs.md) にある。
 
 ## AWS Deploy
 
 Phase 4ではS3をCDKでdeployし、Phase 5ではSQSとDLQをdeployする。`npm run cdk:synth`で確認し、`npm run cdk:deploy:storage`と`npm run cdk:deploy:messaging`で個別にdeployできる。StorageStackのOutput `S3BucketName`とMessagingStackのOutput `AnalyzeQueueUrl`を未commitの`.env`へ設定する。Phase 13では既存のS3、SQS、DLQを再作成せず、VPC、ALB、ECS、RDS、IAM、CloudWatchを追加する。
+
+`npm run consume:analyze`は`SQS_QUEUE_URL`のMessageを最大1件受信し、MessageのValidationに成功した場合だけ`DeleteMessage`する。空なら`EMPTY`を出力する。不正Messageや受信処理の失敗では削除せず、終了コード1になる。これはPhase 6の常駐Workerではない。
 
 ## Cost
 

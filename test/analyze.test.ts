@@ -33,6 +33,7 @@ function createStatementRecord(
 
 function createTestApp(options: {
   statement?: StatementRecord | null;
+  findById?: (id: string) => Promise<StatementRecord | null>;
   markQueued?: (id: string) => Promise<StatementRecord | null>;
   resetQueuedToUploaded?: (
     id: string,
@@ -45,10 +46,12 @@ function createTestApp(options: {
         id: input.id ?? statementId,
         status: input.status ?? "UPLOAD_PENDING",
       }),
-    findById: async () =>
-      options.statement === undefined
-        ? createStatementRecord()
-        : options.statement,
+    findById:
+      options.findById ??
+      (async () =>
+        options.statement === undefined
+          ? createStatementRecord()
+          : options.statement),
     markUploaded: async () => null,
     markQueued:
       options.markQueued ??
@@ -144,6 +147,49 @@ test("Analyze APIはQUEUED以降の再要求でSQSへ再送しない", async () 
     status: "QUEUED",
   });
   assert.equal(sent, false);
+});
+
+test("Analyze APIへ同時に要求してもSQSへは1回だけ送信する", async () => {
+  let currentStatus: StatementRecord["status"] = "UPLOADED";
+  let findCount = 0;
+  let releaseFind: (() => void) | undefined;
+  const findBarrier = new Promise<void>((resolve) => {
+    releaseFind = resolve;
+  });
+  let sendCount = 0;
+  const app = createTestApp({
+    findById: async () => {
+      findCount += 1;
+      if (findCount === 2) {
+        releaseFind?.();
+      }
+      await findBarrier;
+      return createStatementRecord({ status: currentStatus });
+    },
+    markQueued: async () => {
+      if (currentStatus !== "UPLOADED") {
+        return null;
+      }
+
+      currentStatus = "QUEUED";
+      return createStatementRecord({ status: currentStatus });
+    },
+    sendAnalyzeJob: async () => {
+      sendCount += 1;
+    },
+  });
+
+  const [firstResponse, secondResponse] = await Promise.all([
+    app.request(`/statements/${statementId}/analyze`, { method: "POST" }),
+    app.request(`/statements/${statementId}/analyze`, { method: "POST" }),
+  ]);
+
+  assert.deepEqual(
+    new Set([firstResponse.status, secondResponse.status]),
+    new Set([202, 200]),
+  );
+  assert.equal(sendCount, 1);
+  assert.equal(currentStatus, "QUEUED");
 });
 
 test("Analyze APIはSQS送信失敗時にQUEUEDから戻して503を返す", async () => {

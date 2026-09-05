@@ -11,7 +11,7 @@
 3. `UPLOADED -> QUEUED`の条件付きDB更新
 4. `{"statementId":"..."}`だけを送るSQS Message契約
 5. AWS SDK v3のSQS送信・受信・削除アダプター
-6. Receive / Message Validation / Deleteだけを行う最小Consumer境界
+6. Receive / Message Validation / Deleteだけを行う1件処理の最小Consumer
 7. Fake Queueを使った単体テストと、AWS CLIを使った実環境確認
 
 ## 今回は作らないもの
@@ -24,7 +24,7 @@
 - SIGTERM、Graceful Shutdown、Workerの自動スケーリング
 - Outbox、reconciliation job
 
-これらはPhase 6以降で実装する。Phase 5の最小Consumerは、SQSから受け取ったMessageの形式を検証し、確認用にDeleteMessageするだけである。
+これらはPhase 6以降で実装する。Phase 5の最小Consumerは、SQSから最大1件のMessageを受け取り、形式を検証し、確認用にDeleteMessageするだけである。常駐ループやSIGTERM処理は持たない。
 
 ## 処理フロー
 
@@ -77,7 +77,7 @@ Phase 5は直接送信方式にする。
 | SSL強制 | 有効 | 有効 | HTTPS経由に限定 |
 | maxReceiveCount | 3 | - | 一時失敗を3回まで再配送してから隔離 |
 
-CDK Stack削除時の学習環境コストを抑えるため、QueueとDLQは`RemovalPolicy.DESTROY`とする。実運用では保持・削除方針を別途承認する。
+CDK Stack削除時の学習環境コストを抑えるため、QueueとDLQは`RemovalPolicy.DESTROY`とする。実運用では保持・削除方針を別途承認する。DLQのRedrive Allow PolicyはQueue名がCDK生成であることによる循環参照を避けるため`ALLOW_ALL`としている。これはIAM権限による制御とは別であり、実運用では固定名または別StackなどでMain Queueだけに制限する。
 
 ## TDDの進め方
 

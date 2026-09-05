@@ -4,7 +4,7 @@ Status: 実装完了。ECS Workerの実装はPhase 6で行う。
 
 ## 1. 今回作るもの
 
-Phase 5では、解析開始APIからSQS Standard Queueへ`statementId`だけを送る処理と、Messageを受信して形式を確認し、削除する最小のConsumer境界を作った。SQSから受け取った後のS3、Bedrock、PostgreSQL保存処理はまだ実装していない。
+Phase 5では、解析開始APIからSQS Standard Queueへ`statementId`だけを送る処理と、Messageを最大1件受信して形式を確認し、削除する最小のConsumerを作った。SQSから受け取った後のS3、Bedrock、PostgreSQL保存処理と常駐Workerループはまだ実装していない。
 
 ## 2. なぜ必要か
 
@@ -83,6 +83,15 @@ SQSにMessageが残っていれば、クライアントが202を受け取れな�
 - 確認用S3 ObjectとローカルDBのテストstatementも削除した。
 
 最初のデプロイは、CDKのCloudFormation実行RoleにSQS作成権限がなく失敗した。ログインユーザーがAdministratorAccessを持っていても、CloudFormationが引き受けるRoleの権限でリソース作成が行われる。`MessagingStack-*`のSQS Queueだけを作成・設定できるインラインポリシーを実行Roleへ追加して再実行した。この権限はアプリケーションのTask Roleではなく、CDKデプロイ用Roleの権限である。
+
+追加した1件処理Consumerについても、AWS CLIでテストMessageを送信し、`npm run consume:analyze`が`DELETED`と`receiveCount: 1`を出力することを確認した。MessageはConsumerが削除したため、Queueには残っていない。
+
+### レビュー結果と対応
+
+- READMEのSQSデプロイ・`SQS_QUEUE_URL`設定不足を修正した。
+- アダプターだけでなく、`ReceiveMessage -> Validation -> DeleteMessage`を実行する`consumeOneAnalyzeJob`と`npm run consume:analyze`を追加した。
+- 同時解析要求でSQSへ1回だけ送信するテストを追加した。
+- DBとSQSの送信結果不明、認証・所有者条件、DLQの`ALLOW_ALL`は、今回のPhaseの既知の制限として記録した。DBとSQSの送信漏れ対策はOutbox、認証は公開前、DLQのSource Queue制限はPhase 13で再検討する。
 
 ## 7. Security
 
