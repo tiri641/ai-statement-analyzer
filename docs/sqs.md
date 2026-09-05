@@ -1,8 +1,8 @@
 # SQS
 
-## Phase 5の範囲
+## Phase 5 / Phase 6の範囲
 
-Phase 5では解析ジョブをMain Queueへ送信し、最小Consumerが受信・Validation・削除するところまでを扱う。SQSから受け取った後のS3、Bedrock、PostgreSQL保存、ECS WorkerはPhase 6以降で実装する。
+Phase 5では解析ジョブをMain Queueへ送信し、1回だけ動く最小Consumerで受信・Validation・削除を確認した。Phase 6では常駐Workerが同じQueueをLong Pollingし、注入された処理関数の成功後にMessageを削除する。
 
 SQSはWorkerではない。SQSはMessageを保持・配送するサービスであり、WorkerはSQSの`ReceiveMessage`を呼び出して業務処理を行うプログラムである。
 
@@ -47,7 +47,9 @@ SQS ReceiveMessage
 
 `src/queue/sqs-job-queue.ts`がAWS SDK v3の`SendMessageCommand`、`ReceiveMessageCommand`、`DeleteMessageCommand`を隠し、APIとConsumerは`AnalyzeJobQueue`インターフェースを使う。テストではFake clientを注入する。
 
-Phase 5の確認用Consumerは`src/queue/analyze-job-consumer.ts`の`consumeOneAnalyzeJob`である。`npm run consume:analyze`を実行すると、最大1件を受信し、Validation済みのMessageだけをReceiptHandleで削除する。これは常駐Workerではなく、ECS WorkerのLong PollingループはPhase 6で実装する。
+Phase 5の確認用Consumerは`src/queue/analyze-job-consumer.ts`の`consumeOneAnalyzeJob`である。`npm run consume:analyze`を実行すると、最大1件を受信し、Validation済みのMessageだけをReceiptHandleで削除する。これは常駐Workerとは異なる。
+
+Phase 6の常駐Workerは`src/worker/analyze-worker.ts`にあり、`npm run worker`で起動する。Workerは1件ずつ処理し、処理成功後にだけDeleteMessageする。処理失敗、不正Message、Delete失敗では削除せず、Worker自体は継続する。Receiveエラーでは指数バックオフを行う。SIGTERM / SIGINTでは新規受信を止め、Long PollingをAbortする。処理中Jobは通常完了を待つが、Shutdown要求後30秒を超えて完了しない場合は削除せず終了する。
 
 ## RetryとDLQ
 

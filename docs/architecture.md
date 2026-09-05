@@ -20,9 +20,9 @@ flowchart LR
   W -.-> CW
 ```
 
-### Phase 5の実装範囲
+### Phase 5 / Phase 6の実装範囲
 
-Phase 5で実際に動くのは、APIからMain Queueへの送信と、最小ConsumerによるReceive / Validation / Deleteまでである。SQSはWorkerではなく、Messageを保持・配送するサービスである。ECS OCR Worker、S3 GetObject、Bedrock、DB TransactionはPhase 6以降で実装する。
+Phase 5で実際に動くのは、APIからMain Queueへの送信と、1回だけ動く最小ConsumerによるReceive / Validation / Deleteである。Phase 6では、ローカルで常駐Workerを起動し、SQS Long Polling、1件ずつの処理、成功後ACK、SIGTERMによるGraceful Shutdownを実装した。S3 GetObject、Bedrock、DB Transaction、ECS Serviceへのデプロイは後続Phaseで実装する。
 
 ```mermaid
 sequenceDiagram
@@ -38,6 +38,30 @@ sequenceDiagram
   C->>Q: ReceiveMessage(Long Poll)
   C->>C: JSON / UUID Validation
   C->>Q: DeleteMessage(ReceiptHandle)
+```
+
+### Phase 6 Worker Sequence
+
+```mermaid
+sequenceDiagram
+  participant Q as SQS Standard Queue
+  participant W as 常駐Worker
+  participant H as 注入された処理関数
+
+  W->>Q: ReceiveMessage（最大1件、Long Poll）
+  Q-->>W: Messageまたは空応答
+  alt Messageあり
+    W->>H: handleJob(statementId)
+    alt 処理成功
+      W->>Q: DeleteMessage(ReceiptHandle)
+    else 処理失敗
+      W-->>Q: Deleteしない
+      Note over Q,W: Visibility Timeout後に再配送
+    end
+  else 空応答
+    W->>Q: 次のReceiveMessage
+  end
+  Note over W: SIGTERMでReceiveをAbortし、処理中Job完了後に停止。30秒超過時は削除せず終了
 ```
 
 ## Upload Sequence

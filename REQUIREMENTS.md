@@ -102,7 +102,7 @@ UPLOAD_PENDING -> UPLOADED -> QUEUED -> PROCESSING -> COMPLETED
 - DBのUNIQUE制約をアプリケーションコードの重複防止と併用する。
 - DB COMMIT後にSQS `DeleteMessage`する。
 - Visibility TimeoutはOCR処理のp99とheartbeatを考慮して設定する。
-- WorkerはSIGTERMを受けたら新規受信を停止し、処理中Messageを削除せず終了する。
+- WorkerはSIGTERMを受けたら新規受信を停止する。処理中Messageは通常、処理とDeleteMessageの完了を待つが、Shutdown要求後30秒を超えて完了しない場合は削除せず終了する。
 - 失敗時に例外を握りつぶさず、statement status、構造化ログ、SQS受信回数を追跡できる。
 - ログにカード番号、画像、raw AI response全体、Presigned URLを出さない。
 - RDSはPrivate Subnetに置き、ALBのみを入口にする。
