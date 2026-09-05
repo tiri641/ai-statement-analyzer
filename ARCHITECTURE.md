@@ -42,6 +42,12 @@ flowchart LR
 | PostgreSQL | 状態、構造化取引、制約、正確な集計 | LLMの解釈 |
 | Bedrock | OCR、merchant正規化、分類、Analyticsの解釈 | 金額の確定計算、DB整合性保証 |
 
+### Phase 7の現行実装
+
+Phase 6では、ECSへデプロイする前のWorkerプロセスをローカルで実装した。WorkerはSQSをLong Pollingし、Messageを1件ずつ注入された処理関数へ渡す。処理関数が成功した場合だけDeleteMessageし、処理失敗やDelete失敗ではMessageを削除しない。SIGTERM / SIGINTでは新しい受信を停止し、Long PollingをAbortして処理中Jobの完了を待つ。Shutdown要求後30秒経過しても完了しない場合は削除せず終了し、SQSの再配送に任せる。
+
+Workerの処理関数はまだ安全なログ記録だけである。Phase 7ではWorkerから独立した`BedrockOcrAnalyzer`を追加し、画像bytesをConverse APIへ渡し、Tool Use応答をZodで検証できるようにした。S3取得、WorkerへのBedrock組み込み、DB Transaction、冪等な状態更新はPhase 8以降の責務である。ECS Fargateの`stopTimeout=30秒`はPhase 13でTask Definitionへ設定する。
+
 ## Upload Sequence
 
 ```mermaid
@@ -81,7 +87,7 @@ sequenceDiagram
     W->>DB: Atomic claim QUEUED or stale PROCESSING
     alt claim succeeds
         W->>S3: GetObject(statement.s3_key)
-        W->>B: Converse(image + strict JSON schema)
+        W->>B: Converse(image + forced Tool schema)
         B-->>W: OCR structured response
         W->>W: Zod validation + normalize
         W->>DB: BEGIN
@@ -169,14 +175,15 @@ sequenceDiagram
 
 ## 現行仕様確認の要点
 
-- Bedrock Model IDは環境変数化し、実装時にModel Card、画像入力、Converse、Structured Output、Region、料金を再確認する。
-- 現時点の推奨はClaude Haiku 4.5のJP inference profileで、Structured Outputを使用する案。Nova Liteは東京で画像入力可能だがStructured Output非対応なので、明示的な代替案とする。
+- 確認日: 2026-09-06。Bedrock Model IDは環境変数化し、実装時にModel Card、画像入力、Converse、Structured Output、Region、料金を再確認する。
+- Phase 7の既定は`jp.amazon.nova-2-lite-v1:0`。JP Geo inference profileはTokyoから利用でき、推論先はTokyoまたはOsakaになり得る。画像入力はConverseのbytesを使い、JSON Schema Structured Outputsとstrictフィールドの代わりに強制Tool選択 + Tool schemaを使い、Zodで最終検証する。
 - Private SubnetからBedrock Runtimeを呼ぶ場合は、NATまたはBedrock Runtime Interface VPC Endpointが必要。S3はGateway Endpointを優先する。
 
 ## 参照
 
 - [Bedrock model API compatibility](https://docs.aws.amazon.com/bedrock/latest/userguide/models-api-compatibility.html)
-- [Bedrock Structured Outputs](https://docs.aws.amazon.com/en_en/bedrock/latest/userguide/structured-output.html)
+- [Bedrock Structured Outputs](https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html)
 - [Claude Haiku 4.5 model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-haiku-4-5.html)
-- [Amazon Nova Lite model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-lite.html)
+- [Amazon Nova 2 Lite model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-2-lite.html)
+- [Amazon Nova multimodal input](https://docs.aws.amazon.com/nova/latest/nova2-userguide/using-multimodal-models.html)
 - [SQS visibility timeout](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-visibility-timeout.html)

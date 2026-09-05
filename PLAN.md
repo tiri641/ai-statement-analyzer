@@ -110,6 +110,12 @@ Status: 実装完了。SQS Standard Queue、DLQ、`POST /statements/{id}/analyze
 3. SIGTERMで受信停止・処理完了待ちを追加する。
 4. heartbeat / stopTimeoutの設計を確認する。
 
+Status: 実装・動作確認完了。常駐Worker、1件ずつの処理、処理成功後のDeleteMessage、Receiveエラーの指数バックオフ、AbortControllerによるLong Polling中断、SIGTERM / SIGINTのGraceful Shutdown、処理中Jobの30秒タイムアウト、Fake Queueを使ったTDDテストを追加した。S3、Bedrock、DB保存、Heartbeat、ECS `stopTimeout`設定は後続Phaseで扱う。
+
+学習記録は[plans/phase-06.md](plans/phase-06.md)と[learning/phase-06.md](learning/phase-06.md)に記録する。
+
+次のGate: Worker Loop、SQSの再配送、処理失敗時にDeleteしない理由、Shutdown中の処理完了待ち、Heartbeatを後続Phaseにする理由を説明できること。
+
 ### Phase 7: Bedrock AI-OCR
 
 1. 実装開始時にModel Card、Region、画像入力、Structured Output、料金を再確認する。
@@ -117,6 +123,12 @@ Status: 実装完了。SQS Standard Queue、DLQ、`POST /statements/{id}/analyze
 3. fixture imageでOCR responseを取得する。
 4. JSON schema + Zod validationを追加する。
 5. invalid response、throttle、timeoutをテストする。
+
+Phase 7のPlanは[plans/phase-07.md](plans/phase-07.md)に記録した。
+
+Status: 実装・単体テスト・実AWSスモーク確認完了。`ConverseCommand`による画像bytes入力、Nova 2 Lite向けTool Useと強制Tool選択、ZodによるOCR結果Validation、画像入力検証、Bedrockエラー分類、合成PNG、実AWS接続用スモークコマンドを追加した。実AWSでは選択モデルが`strict`フィールドをサポートしないことも確認したため、strictを送信せず、Tool schema + Zodを採用した。S3 GetObject、Worker接続、DB保存、SQS DeleteMessageはPhase 8以降で扱う。
+
+次のGate: Bedrockの画像入力、Tool UseとJSON Schema Structured Outputの違い、選択モデルでstrictを使えない理由、Zodを検証境界に置く理由、SDK RetryとSQS再配送の違い、Phase 7でS3・DBまで接続しない理由を説明できること。
 
 ### Phase 8: Idempotency
 

@@ -8,6 +8,7 @@ import {
   analyzeJobMessageSchema,
   InvalidAnalyzeJobMessageError,
   type AnalyzeJobQueue,
+  type ReceiveAnalyzeJobOptions,
   type ReceivedAnalyzeJob,
 } from "./analyze-job.js";
 
@@ -41,15 +42,18 @@ export class SqsJobQueue implements AnalyzeJobQueue {
     );
   }
 
-  public async receiveOne(): Promise<ReceivedAnalyzeJob | null> {
-    const result = await this.client.send(
-      new ReceiveMessageCommand({
-        QueueUrl: this.queueUrl,
-        MaxNumberOfMessages: 1,
-        WaitTimeSeconds: 20,
-        MessageSystemAttributeNames: ["ApproximateReceiveCount"],
-      }),
-    );
+  public async receiveOne(
+    options: ReceiveAnalyzeJobOptions = {},
+  ): Promise<ReceivedAnalyzeJob | null> {
+    const command = new ReceiveMessageCommand({
+      QueueUrl: this.queueUrl,
+      MaxNumberOfMessages: 1,
+      WaitTimeSeconds: 20,
+      MessageSystemAttributeNames: ["ApproximateReceiveCount"],
+    });
+    const result = options.signal
+      ? await this.client.send(command, { abortSignal: options.signal })
+      : await this.client.send(command);
     const message = result.Messages?.[0];
 
     if (!message) {

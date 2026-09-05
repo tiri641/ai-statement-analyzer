@@ -20,9 +20,9 @@ flowchart LR
   W -.-> CW
 ```
 
-### Phase 5の実装範囲
+### Phase 5 / Phase 6 / Phase 7の実装範囲
 
-Phase 5で実際に動くのは、APIからMain Queueへの送信と、最小ConsumerによるReceive / Validation / Deleteまでである。SQSはWorkerではなく、Messageを保持・配送するサービスである。ECS OCR Worker、S3 GetObject、Bedrock、DB TransactionはPhase 6以降で実装する。
+Phase 5で実際に動くのは、APIからMain Queueへの送信と、1回だけ動く最小ConsumerによるReceive / Validation / Deleteである。Phase 6では、ローカルで常駐Workerを起動し、SQS Long Polling、1件ずつの処理、成功後ACK、SIGTERMによるGraceful Shutdownを実装した。Phase 7では、Workerとは独立したBedrock Converseアダプター、強制Tool選択、Tool input schema、Zod Validation、合成PNGスモークを追加した。実AWSスモークで選択モデルがstrictフィールドをサポートしないことも確認した。S3 GetObject、WorkerへのBedrock組み込み、DB Transaction、ECS Serviceへのデプロイは後続Phaseで実装する。
 
 ```mermaid
 sequenceDiagram
@@ -38,6 +38,30 @@ sequenceDiagram
   C->>Q: ReceiveMessage(Long Poll)
   C->>C: JSON / UUID Validation
   C->>Q: DeleteMessage(ReceiptHandle)
+```
+
+### Phase 6 Worker Sequence
+
+```mermaid
+sequenceDiagram
+  participant Q as SQS Standard Queue
+  participant W as 常駐Worker
+  participant H as 注入された処理関数
+
+  W->>Q: ReceiveMessage（最大1件、Long Poll）
+  Q-->>W: Messageまたは空応答
+  alt Messageあり
+    W->>H: handleJob(statementId)
+    alt 処理成功
+      W->>Q: DeleteMessage(ReceiptHandle)
+    else 処理失敗
+      W-->>Q: Deleteしない
+      Note over Q,W: Visibility Timeout後に再配送
+    end
+  else 空応答
+    W->>Q: 次のReceiveMessage
+  end
+  Note over W: SIGTERMでReceiveをAbortし、処理中Job完了後に停止。30秒超過時は削除せず終了
 ```
 
 ## Upload Sequence
@@ -71,11 +95,29 @@ sequenceDiagram
   Q->>W: long poll Receive
   W->>D: atomic claim
   W->>S: GetObject
-  W->>B: image Converse
-  B-->>W: structured OCR
+  W->>B: image Converse + Tool Use
+  B-->>W: Tool Use OCR候補
   W->>W: Zod validation
   W->>D: transaction save + COMPLETED
   W->>Q: DeleteMessage after COMMIT
+```
+
+### Phase 7 Bedrock Adapter Sequence
+
+```mermaid
+sequenceDiagram
+  participant C as 呼び出し側
+  participant A as BedrockOcrAnalyzer
+  participant B as Bedrock Converse
+  participant Z as Zod
+  C->>A: image bytes + contentType
+  A->>A: 形式・空・10 MiBを検証
+  A->>B: ConverseCommand（画像 + 強制Tool + input schema）
+  B-->>A: Tool Use
+  A->>A: Tool名・stopReason・content数を確認
+  A->>Z: Tool入力をValidation
+  Z-->>A: OcrResult
+  A-->>C: 検証済み結果 + usage
 ```
 
 ## Retry Sequence
