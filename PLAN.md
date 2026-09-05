@@ -97,6 +97,12 @@ Status: 実装・動作確認完了。CDKでS3を管理し、AWS SDK v3のPresig
 3. 最小ConsumerでReceive / Deleteを確認する。
 4. visibility timeoutとredriveを確認する。
 
+Phase 5のPlanは[plans/phase-05.md](plans/phase-05.md)に記録した。
+
+Status: 実装完了。SQS Standard Queue、DLQ、`POST /statements/{id}/analyze`、`UPLOADED -> QUEUED`、AWS SDK v3のProducer / 最小Consumer境界、Fakeテスト、CDKテストを追加した。S3取得、Bedrock、ECS Worker、冪等なOCR保存はPhase 6以降で扱う。
+
+次のGate: SQSとWorkerの責務、Long Polling、Visibility Timeout、DLQ、DBとSQSの障害窓を説明し、実AWSで送受信とredriveを確認する。
+
 ### Phase 6: ECS Worker
 
 1. API / Workerのprocess entrypointを分ける。

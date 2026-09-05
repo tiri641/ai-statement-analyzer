@@ -17,6 +17,8 @@ function createTestApp(database: HealthDatabase) {
       },
       findById: async () => null,
       markUploaded: async () => null,
+      markQueued: async () => null,
+      resetQueuedToUploaded: async () => null,
     },
     objectStore: {
       createPresignedPutUrl: async () => "https://s3.example.test/upload",
@@ -24,6 +26,11 @@ function createTestApp(database: HealthDatabase) {
         contentType: "image/jpeg",
         contentLength: 1024,
       }),
+    },
+    jobQueue: {
+      sendAnalyzeJob: async () => undefined,
+      receiveOne: async () => null,
+      deleteMessage: async () => undefined,
     },
   });
 }

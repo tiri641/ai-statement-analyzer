@@ -15,6 +15,7 @@ import type {
 } from "./database/statement-repository.js";
 import { ObjectNotFoundError } from "./storage/object-store.js";
 import type { StatementObjectStore } from "./storage/object-store.js";
+import type { AnalyzeJobQueue } from "./queue/analyze-job.js";
 
 export interface HealthDatabase {
   query(text: string): Promise<unknown>;
@@ -24,12 +25,15 @@ export interface StatementStore {
   create(input: CreateStatementInput): Promise<StatementRecord>;
   findById(id: string): Promise<StatementRecord | null>;
   markUploaded(id: string): Promise<StatementRecord | null>;
+  markQueued(id: string): Promise<StatementRecord | null>;
+  resetQueuedToUploaded(id: string): Promise<StatementRecord | null>;
 }
 
 export interface AppDependencies {
   database: HealthDatabase;
   statements: StatementStore;
   objectStore: StatementObjectStore;
+  jobQueue: AnalyzeJobQueue;
   presignedUrlExpiresSeconds?: number;
 }
 
@@ -127,10 +131,20 @@ function logStorageFailure(event: string) {
   );
 }
 
+function logQueueFailure(event: string) {
+  console.error(
+    JSON.stringify({
+      event,
+      errorCode: "DEPENDENCY_UNAVAILABLE",
+    }),
+  );
+}
+
 export function createApp({
   database,
   statements,
   objectStore,
+  jobQueue,
   presignedUrlExpiresSeconds = 300,
 }: AppDependencies) {
   const app = new Hono();
@@ -401,6 +415,138 @@ export function createApp({
     }
 
     return context.json(toUploadStatus(uploadedStatement));
+  });
+
+  app.post("/statements/:id/analyze", async (context) => {
+    const parsedId = statementIdSchema.safeParse(context.req.param("id"));
+
+    if (!parsedId.success) {
+      return errorResponse(
+        context,
+        400,
+        "INVALID_REQUEST",
+        "入力内容が不正です。",
+      );
+    }
+
+    let statement: StatementRecord | null;
+
+    try {
+      statement = await statements.findById(parsedId.data);
+    } catch {
+      logQueueFailure("analyze_statement_get_failed");
+      return errorResponse(
+        context,
+        503,
+        "DEPENDENCY_UNAVAILABLE",
+        "依存サービスを利用できません。",
+      );
+    }
+
+    if (!statement) {
+      return errorResponse(
+        context,
+        404,
+        "STATEMENT_NOT_FOUND",
+        "明細が見つかりません。",
+      );
+    }
+
+    if (statement.status === "UPLOAD_PENDING") {
+      return errorResponse(
+        context,
+        409,
+        "STATEMENT_NOT_READY",
+        "画像のアップロードが完了していません。",
+      );
+    }
+
+    if (statement.status === "FAILED") {
+      return errorResponse(
+        context,
+        409,
+        "STATEMENT_NOT_ANALYZABLE",
+        "この明細は解析対象にできません。",
+      );
+    }
+
+    if (statement.status !== "UPLOADED") {
+      return context.json(toUploadStatus(statement));
+    }
+
+    let queuedStatement: StatementRecord | null;
+
+    try {
+      queuedStatement = await statements.markQueued(statement.id);
+    } catch {
+      logQueueFailure("analyze_mark_queued_failed");
+      return errorResponse(
+        context,
+        503,
+        "DEPENDENCY_UNAVAILABLE",
+        "依存サービスを利用できません。",
+      );
+    }
+
+    if (!queuedStatement) {
+      try {
+        queuedStatement = await statements.findById(statement.id);
+      } catch {
+        logQueueFailure("analyze_statement_refetch_failed");
+        return errorResponse(
+          context,
+          503,
+          "DEPENDENCY_UNAVAILABLE",
+          "依存サービスを利用できません。",
+        );
+      }
+
+      if (!queuedStatement) {
+        return errorResponse(
+          context,
+          404,
+          "STATEMENT_NOT_FOUND",
+          "明細が見つかりません。",
+        );
+      }
+
+      if (queuedStatement.status !== "UPLOADED") {
+        return context.json(toUploadStatus(queuedStatement));
+      }
+
+      return errorResponse(
+        context,
+        409,
+        "ANALYZE_CONFLICT",
+        "解析開始の競合が発生しました。",
+      );
+    }
+
+    try {
+      await jobQueue.sendAnalyzeJob(queuedStatement.id);
+    } catch {
+      try {
+        const resetStatement = await statements.resetQueuedToUploaded(
+          queuedStatement.id,
+        );
+
+        if (!resetStatement) {
+          logQueueFailure("analyze_queue_state_recovery_failed");
+        }
+      } catch {
+        logQueueFailure("analyze_queue_state_recovery_failed");
+      }
+
+      logQueueFailure("analyze_job_send_failed");
+      return errorResponse(
+        context,
+        503,
+        "DEPENDENCY_UNAVAILABLE",
+        "依存サービスを利用できません。",
+      );
+    }
+
+    return context.json(toUploadStatus(queuedStatement), 202);
   });
 
   app.get("/statements/:id", async (context) => {

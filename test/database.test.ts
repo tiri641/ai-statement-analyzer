@@ -257,6 +257,44 @@ databaseTest("UPLOAD_PENDINGのstatementだけをUPLOAD済みに更新できる"
   assert.equal(secondUpdate, null);
 });
 
+databaseTest("UPLOADEDのstatementだけをQUEUEDへ更新できる", async () => {
+  assert.ok(repository);
+
+  await repository.create({
+    id: statementId,
+    s3Key: "statements/statement-1.jpg",
+    targetMonth: "2026-08",
+    contentType: "image/jpeg",
+    contentLength: 1024,
+    status: "UPLOADED",
+  });
+
+  const queued = await repository.markQueued(statementId);
+  assert.equal(queued?.status, "QUEUED");
+
+  const secondUpdate = await repository.markQueued(statementId);
+  assert.equal(secondUpdate, null);
+});
+
+databaseTest("QUEUEDのstatementをUPLOADEDへ戻せる", async () => {
+  assert.ok(repository);
+
+  await repository.create({
+    id: statementId,
+    s3Key: "statements/statement-1.jpg",
+    targetMonth: "2026-08",
+    contentType: "image/jpeg",
+    contentLength: 1024,
+    status: "QUEUED",
+  });
+
+  const uploaded = await repository.resetQueuedToUploaded(statementId);
+  assert.equal(uploaded?.status, "UPLOADED");
+
+  const secondUpdate = await repository.resetQueuedToUploaded(statementId);
+  assert.equal(secondUpdate, null);
+});
+
 databaseTest("同じs3_keyは重複登録できない", async () => {
   assert.ok(repository);
 

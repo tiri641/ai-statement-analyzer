@@ -4,7 +4,7 @@
 
 クレジットカード明細画像をS3へ直接アップロードし、SQS経由のECS WorkerがAmazon BedrockでOCR・merchant正規化・カテゴリ分類を行う学習用アプリケーションである。PostgreSQLを数値の正とし、SQL AnalyticsをBedrockが解釈してAI Insightsを作る。
 
-Phase 4までのローカルAPI、Database、S3 Upload、Presigned URLを実装済み。`POST /statements`は短期Presigned PUT URLを返し、Frontendまたはcurlが画像をS3へ直接送る。`POST /statements/{id}/upload/complete`がS3の実体を確認して、`UPLOAD_PENDING`を`UPLOADED`へ更新する。
+Phase 5までのローカルAPI、Database、S3 Upload、Presigned URL、SQS解析ジョブ投入を実装済み。`POST /statements`は短期Presigned PUT URLを返し、Frontendまたはcurlが画像をS3へ直接送る。`POST /statements/{id}/upload/complete`がS3の実体を確認して、`UPLOAD_PENDING`を`UPLOADED`へ更新する。その後`POST /statements/{id}/analyze`が`statementId`だけをSQSへ送り、`QUEUED`を返す。ECS WorkerとBedrockは後続Phaseで実装する。
 
 ## Architecture
 
@@ -30,7 +30,7 @@ Frontend
 - Worker: TypeScript、SQS Long Polling
 - AWS: ECS Fargate、ALB、ECR、S3、SQS、RDS、Bedrock、CloudWatch、IAM、VPC
 - Frontend候補: Vite + React + TypeScript（Decision Required）
-- Infrastructure: AWS CDK + TypeScript（Phase 4はS3 StorageStackのみ）
+- Infrastructure: AWS CDK + TypeScript（Phase 5はS3 StorageStackとMessagingStack）
 
 ## ローカル環境
 
@@ -55,9 +55,9 @@ APIはホストのNode.jsで起動し、PostgreSQLだけをDocker Composeで起�
 
 開発中は `npm run dev` も使用できる。DBを停止する場合は `docker compose stop db`、終了する場合は `docker compose down`を使う。`docker compose down -v`はNamed Volumeを削除するため、意図的なデータ削除時以外は使用しない。
 
-Phase 4のAPI起動とCDK操作には、ローカルのAWS CLI ProfileまたはSSO認証が必要である。AWS認証情報をFrontend、ソースコード、`.env`へAccess Keyとして保存しない。認証情報がない場合でも、`npm test`、`npm run typecheck`、`npm run build`、`npm run cdk:synth`は実行できる。
+Phase 4・5のAPI起動とCDK操作には、ローカルのAWS CLI ProfileまたはSSO認証が必要である。AWS認証情報をFrontend、ソースコード、`.env`へAccess Keyとして保存しない。認証情報がない場合でも、`npm test`、`npm run typecheck`、`npm run build`、`npm run cdk:synth`は実行できる。
 
-Phase 2でMigrationと業務テーブル、Phase 3でAPI入力検証と明細API、Phase 4でS3/CDKとPresigned URLを追加した。SQS、Bedrock、ECS、VPCはまだ追加していない。
+Phase 2でMigrationと業務テーブル、Phase 3でAPI入力検証と明細API、Phase 4でS3/CDKとPresigned URL、Phase 5でSQS/CDKと解析開始APIを追加した。Bedrock、ECS Worker、VPCはまだ追加していない。
 
 ## Environment Variables
 
@@ -91,7 +91,7 @@ APIの契約は [API_DESIGN.md](API_DESIGN.md)、WorkerとSQSの説明は [docs/
 
 ## AWS Deploy
 
-Phase 4ではS3だけをCDKでdeployする。`npm run cdk:synth`で確認し、`npm run cdk:deploy:storage`で`StorageStack`をdeployする。Outputの`S3BucketName`を未commitの`.env`へ設定する。Phase 13ではこのバケットを再作成せず、VPC、ALB、ECS、RDS、SQS、DLQ、IAM、CloudWatchを追加する。
+Phase 4ではS3をCDKでdeployし、Phase 5ではSQSとDLQをdeployする。`npm run cdk:synth`で確認し、`npm run cdk:deploy:storage`と`npm run cdk:deploy:messaging`で個別にdeployできる。StorageStackのOutput `S3BucketName`とMessagingStackのOutput `AnalyzeQueueUrl`を未commitの`.env`へ設定する。Phase 13では既存のS3、SQS、DLQを再作成せず、VPC、ALB、ECS、RDS、IAM、CloudWatchを追加する。
 
 ## Cost
 
@@ -107,4 +107,4 @@ S3 Block Public Access、短期Presigned URL、HTTPS、Private RDS、Security Gr
 
 ## 設計レビュー
 
-Phase 1、Phase 2、Phase 3、Phase 4は完了した。認証なしAPIはloopback host以外で起動できない。Phase 4のS3画像はLifecycleで7日後に削除され、Stack削除時は`RETAIN`でバケットを残す。AWSへ接続しない単体テストではFake S3を使用する。Bedrock Model、Frontend、NAT / Endpoint、Insights API、Image共有、Worker scaling、認証の設計判断は後続Phaseで使用する。
+Phase 1、Phase 2、Phase 3、Phase 4、Phase 5は完了した。認証なしAPIはloopback host以外で起動できない。Phase 4のS3画像はLifecycleで7日後に削除され、Stack削除時は`RETAIN`でバケットを残す。Phase 5のSQSとDLQはSSE-SQS、SSL強制、redrive設定を持つ。AWSへ接続しない単体テストではFake S3とFake SQS clientを使用する。Bedrock Model、Frontend、NAT / Endpoint、Insights API、Image共有、Worker scaling、認証の設計判断は後続Phaseで使用する。

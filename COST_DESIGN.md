@@ -22,7 +22,7 @@
 | RDS PostgreSQL | db.t4g.micro相当、Multi-AZ、gp3 20GB | 約$42.02 |
 | NAT Gateway | 2 AZ、各730h | 約$65.70 + data processing |
 | S3 | 0.5GB程度 + PUT/GET | $1未満想定 |
-| SQS + DLQ | 少量リクエスト | 無料枠内〜$1未満想定 |
+| SQS + DLQ | 少量リクエスト、Queue 1本 + DLQ 1本 | Queueの時間課金はなく、リクエスト従量。少量なら無料枠内〜$1未満想定 |
 | Bedrock | Haiku 4.5の計画例 | 約$2.65 |
 | CloudWatch | Logs 1GB + 少数Alarm | 約$1未満〜数ドル |
 | ECR | private image 2GB | 約$0.20 |
@@ -153,3 +153,4 @@ Insightsをinput 4,000、output 500 tokensで1回行うと約$0.00715。画像�
 ## 価格確認メモ
 
 2026-09-01時点の計画値として、TokyoのPrice List APIでRDS db.t4g.micro Single-AZ $0.025/h、Multi-AZ $0.050/h、GP3 Single-AZ $0.138/GB-month、Multi-AZ $0.276/GB-month、ALB $0.0243/h、ALB LCU $0.008/hを確認した。FargateはAWS公式Japan CDP掲載のTokyo例（Linux x86 $0.05056/vCPU-h、$0.00553/GB-h）を使った。BedrockのHaiku 4.5 token単価、NAT、Endpoint単価は公式料金ページ・公式資料を併記し、実装開始時に必ず再確認する。
+2026-09-01時点の計画値として、TokyoのPrice List APIでRDS db.t4g.micro Single-AZ $0.025/h、Multi-AZ $0.050/h、GP3 Single-AZ $0.138/GB-month、Multi-AZ $0.276/GB-month、ALB $0.0243/h、ALB LCU $0.008/hを確認した。FargateはAWS公式Japan CDP掲載のTokyo例（Linux x86 $0.05056/vCPU-h、$0.00553/GB-h）を使った。SQSはQueueの常時起動時間ではなく、主にAPIリクエスト数・データ量で課金されるため、Phase 5のQueue 1本とDLQ 1本の固定月額は見積もらず、少量利用を$1未満の計画値に含めた。BedrockのHaiku 4.5 token単価、NAT、Endpoint単価は公式料金ページ・公式資料を併記し、実装開始時に必ず再確認する。

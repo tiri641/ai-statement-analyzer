@@ -1,5 +1,6 @@
 import "dotenv/config";
 import * as cdk from "aws-cdk-lib";
+import { MessagingStack } from "../lib/messaging-stack.js";
 import { StorageStack } from "../lib/storage-stack.js";
 
 const app = new cdk.App();
@@ -26,3 +27,5 @@ new StorageStack(app, "StorageStack", {
   frontendOrigin,
   rawRetentionDays,
 });
+
+new MessagingStack(app, "MessagingStack", { env });

@@ -3,7 +3,7 @@
 Securityの正本は [../SECURITY_DESIGN.md](../SECURITY_DESIGN.md)。
 
 - API、Worker、ECS execution roleを分離。
-- APIはS3 Put signing、SQS Send、DB secretだけ。
+- APIはS3 Put signing、SQS Send、DB secretだけ。Phase 5ではSQS Queue URLを環境変数から読み、FrontendへAWS Credentialsを渡さない。
 - WorkerはSQS Receive/Delete/Visibility、S3 Get、Bedrock Invoke、DB secretだけ。
 - RDSはprivate、SGはAPI / Workerから5432のみ。
 - S3はCDKでprivate、Block Public Access、SSE-S3、HTTPS強制、TLS 1.2以上、7日Lifecycleを設定する。

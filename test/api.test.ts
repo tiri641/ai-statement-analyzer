@@ -51,6 +51,9 @@ function createTestApp(options: {
     markUploaded:
       options.markUploaded ??
       (async () => createStatementRecord({ status: "UPLOADED" })),
+    markQueued: async () => createStatementRecord({ status: "QUEUED" }),
+    resetQueuedToUploaded: async () =>
+      createStatementRecord({ status: "UPLOADED" }),
   };
 
   return createApp({
@@ -59,6 +62,11 @@ function createTestApp(options: {
     },
     statements,
     objectStore,
+    jobQueue: {
+      sendAnalyzeJob: async () => undefined,
+      receiveOne: async () => null,
+      deleteMessage: async () => undefined,
+    },
   });
 }
 

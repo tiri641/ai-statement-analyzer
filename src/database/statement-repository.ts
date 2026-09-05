@@ -274,6 +274,70 @@ export class StatementRepository {
     return row ? mapStatement(row) : null;
   }
 
+  public async markQueued(id: string): Promise<StatementRecord | null> {
+    const result = await this.pool.query<StatementDatabaseRow>(
+      `
+        UPDATE statements
+        SET
+          status = 'QUEUED',
+          updated_at = NOW()
+        WHERE id = $1
+          AND status = 'UPLOADED'
+        RETURNING
+          id,
+          owner_id,
+          s3_key,
+          target_month::text,
+          status,
+          content_type,
+          content_length,
+          processing_started_at,
+          processed_at,
+          failure_code,
+          failure_message,
+          created_at,
+          updated_at
+      `,
+      [id],
+    );
+
+    const row = result.rows[0];
+    return row ? mapStatement(row) : null;
+  }
+
+  public async resetQueuedToUploaded(
+    id: string,
+  ): Promise<StatementRecord | null> {
+    const result = await this.pool.query<StatementDatabaseRow>(
+      `
+        UPDATE statements
+        SET
+          status = 'UPLOADED',
+          updated_at = NOW()
+        WHERE id = $1
+          AND status = 'QUEUED'
+        RETURNING
+          id,
+          owner_id,
+          s3_key,
+          target_month::text,
+          status,
+          content_type,
+          content_length,
+          processing_started_at,
+          processed_at,
+          failure_code,
+          failure_message,
+          created_at,
+          updated_at
+      `,
+      [id],
+    );
+
+    const row = result.rows[0];
+    return row ? mapStatement(row) : null;
+  }
+
   public async updateStatus(
     id: string,
     status: StatementStatus,

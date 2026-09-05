@@ -20,6 +20,26 @@ flowchart LR
   W -.-> CW
 ```
 
+### Phase 5の実装範囲
+
+Phase 5で実際に動くのは、APIからMain Queueへの送信と、最小ConsumerによるReceive / Validation / Deleteまでである。SQSはWorkerではなく、Messageを保持・配送するサービスである。ECS OCR Worker、S3 GetObject、Bedrock、DB TransactionはPhase 6以降で実装する。
+
+```mermaid
+sequenceDiagram
+  participant F as Frontend
+  participant A as API
+  participant D as PostgreSQL
+  participant Q as SQS Standard Queue
+  participant C as 最小Consumer
+  F->>A: POST /statements/{id}/analyze
+  A->>D: UPDATE UPLOADED -> QUEUED
+  A->>Q: SendMessage({statementId})
+  A-->>F: 202 QUEUED
+  C->>Q: ReceiveMessage(Long Poll)
+  C->>C: JSON / UUID Validation
+  C->>Q: DeleteMessage(ReceiptHandle)
+```
+
 ## Upload Sequence
 
 ```mermaid
