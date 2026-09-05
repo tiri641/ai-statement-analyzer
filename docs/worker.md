@@ -8,7 +8,7 @@ SQSはMessageを保持・配送するAWSサービスであり、WorkerはSQSか�
 
 Phase 6では、APIとは別に常駐するWorkerプロセスをローカルで実装した。`npm run worker`で起動し、SQSをLong Pollingして最大1件ずつ受信する。
 
-Phase 6の処理関数は、受信したMessageの`messageId`、`statementId`、`receiveCount`を安全に記録するだけである。S3取得、Bedrock OCR、PostgreSQL保存、ECS Serviceへのデプロイは後続Phaseで実装する。
+Phase 6の処理関数は、受信したMessageの`messageId`、`statementId`、`receiveCount`を安全に記録するだけである。Phase 7ではWorkerから独立したBedrock OCRアダプターを追加したが、S3取得・Bedrock呼び出し・PostgreSQL保存をこの処理関数へ接続するのは後続Phaseで実装する。
 
 ## 基本ループ
 

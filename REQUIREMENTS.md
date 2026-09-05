@@ -125,8 +125,8 @@ UPLOAD_PENDING -> UPLOADED -> QUEUED -> PROCESSING -> COMPLETED
 以下は推奨案を記載しているが、Phase 1開始前にユーザーが選択・承認する。
 
 1. **Bedrock Model / データレジデンシー**
-   - 推奨: `jp.anthropic.claude-haiku-4-5-20251001-v1:0` を既定値にし、Converse APIとStructured Outputを使う。日本向けGeo inference profileのため、東京だけに限定されず東京・大阪で推論される可能性を説明する。
-   - 代替: `amazon.nova-lite-v1:0`。東京リージョンで画像入力を使えるが、現行Model CardではStructured Output非対応。JSON parse + Zodは可能だが、Structured Output学習はできない。
+   - Phase 7採用: `jp.amazon.nova-2-lite-v1:0`を既定値にし、Converse APIの画像入力、強制Tool選択、Tool input schemaを使う。実AWSで選択モデルが`strict`フィールドをサポートしないことを確認したため、Tool入力をZodで検証する。日本向けGeo inference profileのデータパスと利用可能RegionはModel Cardで確認する。
+   - 代替: Claude Haiku 4.5。JSON Schema Structured Outputsは使いやすいが、今回のTokyoで画像入力を使う既定候補には採用しなかった。モデルIDは`BEDROCK_OCR_MODEL_ID`で変更可能にする。
 2. **DB Library / Migration**
    - 推奨: `pg` + SQL migration（`node-pg-migrate`等の薄い実行器）。SQL、transaction、constraintを直接学べる。
    - 代替: Kysely（型安全SQL）、Prisma（生産性は高いがSQL理解が薄くなりやすい）。
@@ -156,4 +156,4 @@ UPLOAD_PENDING -> UPLOADED -> QUEUED -> PROCESSING -> COMPLETED
 
 - 確認日: 2026-09-01
 - 対象Region: `ap-northeast-1`（Tokyo）
-- AWS仕様・モデル・料金は変わるため、Phase 7およびPhase 13実装開始時に公式ドキュメントを再確認する。
+- AWS仕様・モデル・料金は変わるため、Phase 7で公式ドキュメントを確認した。Phase 13のdeploy開始時にも、利用可能Region、モデルアクセス、料金、IAMアクションを再確認する。

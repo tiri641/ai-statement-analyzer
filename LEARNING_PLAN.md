@@ -104,11 +104,11 @@
 
 ## Phase 7: Bedrock AI-OCR
 
-- 作るもの: image input、Converse、Structured Output、Zod validation。
+- 作るもの: image input、Converse、強制Tool選択、Tool input schema、Zod validation、合成PNGスモーク。
 - 必要性: OCRと分類を実装する。
-- 内部処理: S3 bytes -> Bedrock -> JSON -> Zod -> domain object。
-- 選択肢: Claude Haiku 4.5、Nova Lite、専用OCR。推奨はClaude Haiku 4.5 Structured Output案。
-- 選択理由: current model cardで画像入力・Converse・Structured Outputを確認。ただしJP Geoのデータ経路を承認する。
+- 内部処理: 呼び出し側bytes -> Bedrock Converse -> Tool Use -> Zod -> domain object。S3 GetObjectとWorker接続はPhase 8以降で行う。
+- 選択肢: Claude Haiku 4.5、Nova 2 Lite、専用OCR。Phase 7の採用は`jp.amazon.nova-2-lite-v1:0`である。
+- 選択理由: Tokyoから利用できるJP Geo inference profileで画像OCRを試し、Tool UseとZodを学習できる。実AWSスモークで選択モデルがstrictフィールドをサポートしないことを確認したため、Tool input schemaを使う。JSON Schema Structured Outputsの対応状況とデータ経路はModel Cardで確認する。
 - 完了条件: valid、invalid date、invalid amount、unknown category、throttlingの挙動を確認。
 - 質問: Structured OutputでもなぜZodが必要か / model IDをenv化する理由は / OCRと分類の責務は。
 

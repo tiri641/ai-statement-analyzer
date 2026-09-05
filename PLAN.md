@@ -124,6 +124,12 @@ Status: 実装・動作確認完了。常駐Worker、1件ずつの処理、処�
 4. JSON schema + Zod validationを追加する。
 5. invalid response、throttle、timeoutをテストする。
 
+Phase 7のPlanは[plans/phase-07.md](plans/phase-07.md)に記録した。
+
+Status: 実装・単体テスト・実AWSスモーク確認完了。`ConverseCommand`による画像bytes入力、Nova 2 Lite向けTool Useと強制Tool選択、ZodによるOCR結果Validation、画像入力検証、Bedrockエラー分類、合成PNG、実AWS接続用スモークコマンドを追加した。実AWSでは選択モデルが`strict`フィールドをサポートしないことも確認したため、strictを送信せず、Tool schema + Zodを採用した。S3 GetObject、Worker接続、DB保存、SQS DeleteMessageはPhase 8以降で扱う。
+
+次のGate: Bedrockの画像入力、Tool UseとJSON Schema Structured Outputの違い、選択モデルでstrictを使えない理由、Zodを検証境界に置く理由、SDK RetryとSQS再配送の違い、Phase 7でS3・DBまで接続しない理由を説明できること。
+
 ### Phase 8: Idempotency
 
 1. QUEUED -> PROCESSINGのAtomic claimを追加する。

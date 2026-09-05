@@ -9,7 +9,7 @@
 - Learningの概算: API 1 task、Worker 1 task、各0.25 vCPU / 0.5 GiB、ALB 1台・0.5 LCU、RDS PostgreSQL db.t4g.micro Single-AZ・gp3 20GB、NAT 1台、ECR 2GB、Secrets 2件、CloudWatchログ1GB/月。
 - Production-likeの概算: API 2 task、Worker 2 task、同じtaskサイズ、ALB 1台・0.5 LCU、RDS Multi-AZ相当、NAT 2台、同じECR / Secrets。
 - 画像100枚/月、1画像5MB、画像は最大7日保持、OCR 100回、Insights生成1回/月を例にする。Phase 4のS3 Lifecycleも7日にする。
-- Bedrockの入力tokenは画像内容・解像度・モデルで変わるため、以下のBedrock金額は計画用の例であり、実際のUsageを確認する。
+- Phase 7のBedrock OCRは`jp.amazon.nova-2-lite-v1:0`（JP Geo inference profile）を既定とする。入力token・出力token・サービスTier・Geo経路で料金が変わるため、Bedrock金額は固定インフラ費用に含めず、実際のUsageで別計算する。
 
 料金は変更される。デプロイ前にAWS Pricing Calculatorと各サービスのRegion別ページで再計算する。
 
@@ -23,7 +23,7 @@
 | NAT Gateway | 2 AZ、各730h | 約$65.70 + data processing |
 | S3 | 0.5GB程度 + PUT/GET | $1未満想定 |
 | SQS + DLQ | 少量リクエスト、Queue 1本 + DLQ 1本 | Queueの時間課金はなく、リクエスト従量。少量なら無料枠内〜$1未満想定 |
-| Bedrock | Haiku 4.5の計画例 | 約$2.65 |
+| Bedrock | Nova 2 Lite、100 OCRの使用量従量 | 下記の式で別計算 |
 | CloudWatch | Logs 1GB + 少数Alarm | 約$1未満〜数ドル |
 | ECR | private image 2GB | 約$0.20 |
 | Secrets Manager | 2 secrets | 約$0.80 |
@@ -45,7 +45,7 @@ Learningでは可用性を一部下げるが、S3 private、TLS、IAM、Private 
 | ECR 2GB | $0.20 |
 | Secrets 2件 | $0.80 |
 | CloudWatch Logs 1GB | $0.76 ingestionを上限目安にする（free tier適用前） |
-| Bedrock | 下記の100 OCR例で約$2.65 |
+| Bedrock | Nova 2 Liteの入力・出力token従量 | 下記の式で別計算 |
 | S3 / SQS / 小量データ転送 | $1未満〜少額想定 |
 | 合計 | 約$101〜110/月 + 税・データ変動 |
 
@@ -69,15 +69,16 @@ ALB、NAT、RDSなどは「ECS desiredCount=0」にしても自動で消えな�
 
 ## Bedrock計算例
 
-計画用にClaude Haiku 4.5を input $1.10 / 1M tokens、output $5.50 / 1M tokensとし、1 OCRあたり20,000 input tokens、800 output tokensを仮定する。
+Phase 7の既定モデルはNova 2 Liteである。公式のマルチモーダル仕様では、画像1枚は計画上230 input tokensとして扱われ、system prompt・user prompt・Tool入力のtokenもinputに含まれる。1 OCRあたりの追加テキストを1,000 input tokens、Tool応答を800 output tokens、100 OCRと仮定した場合の式は次のとおりである。
 
-```
-100 x ((20,000 / 1,000,000 x $1.10)
-     + (800 / 1,000,000 x $5.50))
-= $2.64
+```text
+100 x ((1,230 / 1,000,000 x P_input)
+     + (800 / 1,000,000 x P_output))
 ```
 
-Insightsをinput 4,000、output 500 tokensで1回行うと約$0.00715。画像の実際のtoken量、再試行、モデル、Inference Profile、Region、Batch利用可否で変わるため、使用量をCloudWatch / Bedrockの請求明細で確認する。LLMに全transactionsを渡さず、SQLで圧縮した集計だけを渡すことがコストにも効く。
+`P_input`と`P_output`は、確認日に[Amazon Bedrock料金](https://aws.amazon.com/bedrock/pricing/)で`jp.amazon.nova-2-lite-v1:0`のStandardまたは選択したTierを確認して代入する。JP Geoは東京から東京・大阪へルーティングされ得るため、料金とデータパスの両方を確認する。再試行、Insights、prompt cache、Tier変更でも増減する。実装はConverse応答のusageを返すため、実測値で再計算する。
+
+InsightsはSQLで圧縮したAnalyticsだけを入力し、全transactionsや画像を渡さない。入力tokenを抑え、LLMには解釈だけをさせる。
 
 ## NAT Gateway vs VPC Endpoint
 
@@ -152,5 +153,4 @@ Insightsをinput 4,000、output 500 tokensで1回行うと約$0.00715。画像�
 
 ## 価格確認メモ
 
-2026-09-01時点の計画値として、TokyoのPrice List APIでRDS db.t4g.micro Single-AZ $0.025/h、Multi-AZ $0.050/h、GP3 Single-AZ $0.138/GB-month、Multi-AZ $0.276/GB-month、ALB $0.0243/h、ALB LCU $0.008/hを確認した。FargateはAWS公式Japan CDP掲載のTokyo例（Linux x86 $0.05056/vCPU-h、$0.00553/GB-h）を使った。BedrockのHaiku 4.5 token単価、NAT、Endpoint単価は公式料金ページ・公式資料を併記し、実装開始時に必ず再確認する。
-2026-09-01時点の計画値として、TokyoのPrice List APIでRDS db.t4g.micro Single-AZ $0.025/h、Multi-AZ $0.050/h、GP3 Single-AZ $0.138/GB-month、Multi-AZ $0.276/GB-month、ALB $0.0243/h、ALB LCU $0.008/hを確認した。FargateはAWS公式Japan CDP掲載のTokyo例（Linux x86 $0.05056/vCPU-h、$0.00553/GB-h）を使った。SQSはQueueの常時起動時間ではなく、主にAPIリクエスト数・データ量で課金されるため、Phase 5のQueue 1本とDLQ 1本の固定月額は見積もらず、少量利用を$1未満の計画値に含めた。BedrockのHaiku 4.5 token単価、NAT、Endpoint単価は公式料金ページ・公式資料を併記し、実装開始時に必ず再確認する。
+2026-09-01時点の計画値として、TokyoのPrice List APIでRDS db.t4g.micro Single-AZ $0.025/h、Multi-AZ $0.050/h、GP3 Single-AZ $0.138/GB-month、Multi-AZ $0.276/GB-month、ALB $0.0243/h、ALB LCU $0.008/hを確認した。FargateはAWS公式Japan CDP掲載のTokyo例（Linux x86 $0.05056/vCPU-h、$0.00553/GB-h）を使った。SQSはQueueの常時起動時間ではなく、主にAPIリクエスト数・データ量で課金されるため、Phase 5のQueue 1本とDLQ 1本の固定月額は見積もらず、少量利用を$1未満の計画値に含めた。BedrockはPhase 7でNova 2 Liteを既定としたため、モデル・Tier・token使用量に応じた変動費として固定合計から分離した。実装開始時に公式料金ページで再確認する。
