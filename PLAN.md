@@ -2,7 +2,7 @@
 
 ## 現在の状態
 
-Phase 0（設計）を完了し、Phase 1（ローカル開発環境）の実装・動作確認を完了した。Phase 2（Database）の開始前にPhase 1の学習内容を確認する。
+Phase 0（設計）、Phase 1（ローカル開発環境）、Phase 2（Database）、Phase 3（API）の実装・動作確認を完了した。
 
 ## 作業ルール
 
@@ -68,6 +68,12 @@ Status: 実装・動作確認完了。Migration、Schema制約、Index、Reposit
 2. POST /statementsを実装する。
 3. GET /statements/{id}を実装する。
 4. 400 / 404 / 409を確認する。
+
+Phase 3のPlanは[plans/phase-03.md](plans/phase-03.md)に記録する。Phase 3ではS3へ接続せず、画像情報のDB登録と、Phase 4で使うUpload契約を実装する。
+
+Status: 実装・動作確認完了。Zod Validation、Migration 003、明細作成・状態取得API、APIエラー処理を追加し、Unit TestとIntegration Testに成功した。
+
+次のGate: Phase 3のレビュー修正、API入力検証、DB登録、S3 Uploadとの通信分離、学習記録を確認する。
 
 ### Phase 4: S3
 

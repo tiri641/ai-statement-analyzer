@@ -8,13 +8,25 @@ function createTestDatabase(
   return { query };
 }
 
+function createTestApp(database: HealthDatabase) {
+  return createApp({
+    database,
+    statements: {
+      create: async () => {
+        throw new Error("test-only repository");
+      },
+      findById: async () => null,
+    },
+  });
+}
+
 test("GET /healthはデータベースへ接続せずAPIの生存状態を返す", async () => {
   let queryCalled = false;
   const db = createTestDatabase(async () => {
     queryCalled = true;
     return { rows: [] };
   });
-  const app = createApp(db);
+  const app = createTestApp(db);
 
   const response = await app.request("/health");
 
@@ -32,7 +44,7 @@ test("GET /health/dbはデータベースへの問い合わせ成功時に200を
     queryText = text;
     return { rows: [{ result: 1 }] };
   });
-  const app = createApp(db);
+  const app = createTestApp(db);
 
   const response = await app.request("/health/db");
 
@@ -49,7 +61,7 @@ test("GET /health/dbはデータベースへの問い合わせ失敗時に503を
   const db = createTestDatabase(async () => {
     throw dbError;
   });
-  const app = createApp(db);
+  const app = createTestApp(db);
 
   const response = await app.request("/health/db");
   const body = await response.text();
@@ -64,7 +76,7 @@ test("GET /health/dbはデータベースへの問い合わせ失敗時に503を
 
 test("未定義のパスは404を返す", async () => {
   const db = createTestDatabase(async () => ({ rows: [] }));
-  const app = createApp(db);
+  const app = createTestApp(db);
 
   const response = await app.request("/unknown");
 

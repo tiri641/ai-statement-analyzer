@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
+import { UniqueConstraintError } from "./errors.js";
 
 export const STATEMENT_STATUSES = [
   "UPLOAD_PENDING",
@@ -17,6 +18,8 @@ export interface CreateStatementInput {
   ownerId?: string | null;
   s3Key: string;
   targetMonth: string;
+  contentType: "image/jpeg" | "image/png";
+  contentLength: number;
   status?: StatementStatus;
 }
 
@@ -26,8 +29,12 @@ export interface StatementRecord {
   s3Key: string;
   targetMonth: string;
   status: StatementStatus;
+  contentType: "image/jpeg" | "image/png";
+  contentLength: number;
   processingStartedAt: Date | null;
   processedAt: Date | null;
+  failureCode: string | null;
+  failureMessage: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -54,8 +61,12 @@ interface StatementDatabaseRow {
   s3_key: string;
   target_month: string;
   status: StatementStatus;
+  content_type: "image/jpeg" | "image/png";
+  content_length: string | number;
   processing_started_at: Date | null;
   processed_at: Date | null;
+  failure_code: string | null;
+  failure_message: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -88,8 +99,12 @@ function mapStatement(row: StatementDatabaseRow): StatementRecord {
     s3Key: row.s3_key,
     targetMonth: row.target_month,
     status: row.status,
+    contentType: row.content_type,
+    contentLength: Number(row.content_length),
     processingStartedAt: row.processing_started_at,
     processedAt: row.processed_at,
+    failureCode: row.failure_code,
+    failureMessage: row.failure_message,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -120,6 +135,15 @@ function getFirstRow<T>(result: { rows: T[] }, message: string): T {
   return row;
 }
 
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "23505"
+  );
+}
+
 async function rollbackTransaction(
   client: PoolClient,
   originalError: unknown,
@@ -144,36 +168,52 @@ export class StatementRepository {
   }
 
   public async create(input: CreateStatementInput): Promise<StatementRecord> {
-    const result = await this.pool.query<StatementDatabaseRow>(
-      `
-        INSERT INTO statements (
-          id,
-          owner_id,
-          s3_key,
-          target_month,
-          status
-        ) VALUES ($1, $2, $3, $4, $5)
-        RETURNING
-          id,
-          owner_id,
-          s3_key,
-          target_month::text,
-          status,
-          processing_started_at,
-          processed_at,
-          created_at,
-          updated_at
-      `,
-      [
-        input.id ?? randomUUID(),
-        input.ownerId ?? null,
-        input.s3Key,
-        normalizeTargetMonth(input.targetMonth),
-        input.status ?? "UPLOAD_PENDING",
-      ],
-    );
+    try {
+      const result = await this.pool.query<StatementDatabaseRow>(
+        `
+          INSERT INTO statements (
+            id,
+            owner_id,
+            s3_key,
+            target_month,
+            status,
+            content_type,
+            content_length
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+          RETURNING
+            id,
+            owner_id,
+            s3_key,
+            target_month::text,
+            status,
+            content_type,
+            content_length,
+            processing_started_at,
+            processed_at,
+            failure_code,
+            failure_message,
+            created_at,
+            updated_at
+        `,
+        [
+          input.id ?? randomUUID(),
+          input.ownerId ?? null,
+          input.s3Key,
+          normalizeTargetMonth(input.targetMonth),
+          input.status ?? "UPLOAD_PENDING",
+          input.contentType,
+          input.contentLength,
+        ],
+      );
 
-    return mapStatement(getFirstRow(result, "statementの作成結果がありません"));
+      return mapStatement(getFirstRow(result, "statementの作成結果がありません"));
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new UniqueConstraintError();
+      }
+
+      throw error;
+    }
   }
 
   public async findById(id: string): Promise<StatementRecord | null> {
@@ -185,8 +225,12 @@ export class StatementRepository {
           s3_key,
           target_month::text,
           status,
+          content_type,
+          content_length,
           processing_started_at,
           processed_at,
+          failure_code,
+          failure_message,
           created_at,
           updated_at
         FROM statements
@@ -214,8 +258,12 @@ export class StatementRepository {
           s3_key,
           target_month::text,
           status,
+          content_type,
+          content_length,
           processing_started_at,
           processed_at,
+          failure_code,
+          failure_message,
           created_at,
           updated_at
       `,
