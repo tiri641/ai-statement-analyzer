@@ -258,13 +258,18 @@ function validateImage(image: OcrImageInput): void {
 
 function getToolUse(response: ConverseCommandOutput): ToolUseBlock {
   const content = response.output?.message?.content;
-  const toolUseBlocks = content?.filter(isToolUseBlock) ?? [];
 
   if (response.stopReason !== "tool_use") {
     throw new InvalidOcrResponseError("OCR応答がTool Useで終了していません");
   }
 
-  if (content?.length !== 1 || toolUseBlocks.length !== 1) {
+  if (!Array.isArray(content)) {
+    throw new InvalidOcrResponseError("OCR応答のcontentが不正です");
+  }
+
+  const toolUseBlocks = content.filter(isToolUseBlock);
+
+  if (content.length !== 1 || toolUseBlocks.length !== 1) {
     throw new InvalidOcrResponseError("OCR応答のTool Use件数が不正です");
   }
 
@@ -285,7 +290,7 @@ function getToolUse(response: ConverseCommandOutput): ToolUseBlock {
 function isToolUseBlock(
   block: ContentBlock,
 ): block is ContentBlock.ToolUseMember {
-  return "toolUse" in block;
+  return typeof block === "object" && block !== null && "toolUse" in block;
 }
 
 function getErrorCodes(error: unknown): string[] {

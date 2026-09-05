@@ -102,7 +102,7 @@ Bedrockには次の情報を持つToolを定義する。
 }
 ```
 
-Tool Useがない、指定したTool名でない、入力がない、複数のcontent blockが返る場合は`InvalidOcrResponseError`にする。
+Tool Useがない、指定したTool名でない、入力がない、contentが配列でない、不正なcontent要素がある、複数のcontent blockが返る場合は`InvalidOcrResponseError`にする。SDKの型定義だけに依存せず、実行時にも応答境界を確認する。
 
 Zodでは次を確認する。
 

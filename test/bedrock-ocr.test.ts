@@ -251,6 +251,35 @@ test("Bedrock応答に期待したTool Useがなければ拒否する", async ()
   );
 });
 
+test("Bedrock応答の不正なcontent要素を安全なエラーとして拒否する", async () => {
+  const fake = createClient({
+    output: {
+      message: {
+        role: "assistant",
+        content: [null as never],
+      },
+    },
+    stopReason: "tool_use",
+    usage: {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+    },
+    metrics: { latencyMs: 0 },
+    $metadata: {},
+  });
+  const analyzer = new BedrockOcrAnalyzer({
+    client: fake.client,
+    modelId: "jp.amazon.nova-2-lite-v1:0",
+    region: "ap-northeast-1",
+  });
+
+  await assert.rejects(
+    () => analyzer.analyze(image),
+    (error: unknown) => error instanceof InvalidOcrResponseError,
+  );
+});
+
 test("画像形式とサイズをBedrock呼び出し前に検証する", async () => {
   const fake = createClient(createResponse(validInput));
   const analyzer = new BedrockOcrAnalyzer({

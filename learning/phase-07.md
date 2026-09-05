@@ -39,7 +39,7 @@ ConverseCommand
   ↓
 BedrockのTool Use応答
   ↓
-Tool名・stopReason・content block数を確認
+Tool名・stopReason・content blockの実行時形式・件数を確認
   ↓
 Zod Validation
   ↓
