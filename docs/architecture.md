@@ -61,7 +61,7 @@ sequenceDiagram
   else 空応答
     W->>Q: 次のReceiveMessage
   end
-  Note over W: SIGTERMでReceiveをAbortし、処理中Job完了後に停止
+  Note over W: SIGTERMでReceiveをAbortし、処理中Job完了後に停止。30秒超過時は削除せず終了
 ```
 
 ## Upload Sequence

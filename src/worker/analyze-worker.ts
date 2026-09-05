@@ -67,6 +67,8 @@ export class AnalyzeWorker {
   private readonly shutdownPromise: Promise<void>;
   private resolveShutdown!: () => void;
   private receiveAbortController: AbortController | undefined;
+  private activeHandlerAbortController: AbortController | undefined;
+  private shutdownDeadlineAt: number | undefined;
   private shutdownRequested = false;
 
   public constructor(options: AnalyzeWorkerOptions) {
@@ -88,7 +90,9 @@ export class AnalyzeWorker {
     }
 
     this.shutdownRequested = true;
+    this.shutdownDeadlineAt = Date.now() + this.shutdownTimeoutMs;
     this.receiveAbortController?.abort();
+    this.activeHandlerAbortController?.abort();
     this.shutdownAbortController.abort();
     this.resolveShutdown();
     this.logger.info({ event: "worker_shutdown_requested" });
@@ -161,9 +165,13 @@ export class AnalyzeWorker {
             return;
           }
 
+          const remainingMs = Math.max(
+            0,
+            (this.shutdownDeadlineAt ?? Date.now()) - Date.now(),
+          );
           timer = setTimeout(
             () => resolve({ status: "TIMED_OUT" }),
-            this.shutdownTimeoutMs,
+            remainingMs,
           );
         }),
     );
@@ -213,6 +221,7 @@ export class AnalyzeWorker {
   private async processJob(job: ReceivedAnalyzeJob): Promise<void> {
     const startedAt = Date.now();
     const handlerAbortController = new AbortController();
+    this.activeHandlerAbortController = handlerAbortController;
     this.logger.info({
       event: "worker_job_started",
       messageId: job.messageId,
@@ -220,11 +229,18 @@ export class AnalyzeWorker {
       receiveCount: job.receiveCount,
     });
 
-    const handlerResult = await this.runWithShutdownTimeout(
-      Promise.resolve().then(() =>
-        this.handleJob(job, { signal: handlerAbortController.signal }),
-      ),
-    );
+    let handlerResult: ShutdownOperationResult<void>;
+    try {
+      handlerResult = await this.runWithShutdownTimeout(
+        Promise.resolve().then(() =>
+          this.handleJob(job, { signal: handlerAbortController.signal }),
+        ),
+      );
+    } finally {
+      if (this.activeHandlerAbortController === handlerAbortController) {
+        this.activeHandlerAbortController = undefined;
+      }
+    }
 
     if (handlerResult.status === "FAILED") {
       this.logger.error({

@@ -94,7 +94,7 @@ APIの契約は [API_DESIGN.md](API_DESIGN.md)、WorkerとSQSの説明は [docs/
 
 Phase 4ではS3をCDKでdeployし、Phase 5ではSQSとDLQをdeployする。`npm run cdk:synth`で確認し、`npm run cdk:deploy:storage`と`npm run cdk:deploy:messaging`で個別にdeployできる。StorageStackのOutput `S3BucketName`とMessagingStackのOutput `AnalyzeQueueUrl`を未commitの`.env`へ設定する。Phase 13では既存のS3、SQS、DLQを再作成せず、VPC、ALB、ECS、RDS、IAM、CloudWatchを追加する。
 
-`npm run consume:analyze`は`SQS_QUEUE_URL`のMessageを最大1件受信し、MessageのValidationに成功した場合だけ`DeleteMessage`する。空なら`EMPTY`を出力する。常駐Workerの`npm run worker`は処理関数の成功後だけ削除し、処理失敗・不正Message・Delete失敗時は削除せず継続する。SIGTERM / SIGINTを受信すると新規受信を止め、処理中Messageの完了を待つ。
+`npm run consume:analyze`は`SQS_QUEUE_URL`のMessageを最大1件受信し、MessageのValidationに成功した場合だけ`DeleteMessage`する。空なら`EMPTY`を出力する。常駐Workerの`npm run worker`は処理関数の成功後だけ削除し、処理失敗・不正Message・Delete失敗時は削除せず継続する。SIGTERM / SIGINTを受信すると新規受信を止め、通常は処理中Messageの完了を待つ。Shutdown要求後30秒を超えて処理または削除が完了しない場合は削除せず終了し、SQSの再配送に任せる。
 
 ## Cost
 

@@ -61,7 +61,7 @@ RedでWorker Loop、ACK、エラー継続、バックオフ、Shutdownのテス�
 - 処理成功後だけMessageを削除する。
 - 処理失敗、不正Message、Delete失敗時にMessageを削除しない。
 - Receiveエラー後もWorkerが継続する。
-- SIGTERM時にReceiveを中断し、処理中Messageの完了を待つ。
+- SIGTERM時にReceiveを中断し、処理中Messageの完了を待つ。Shutdown要求後30秒を超えて完了しない場合は削除せず終了する。
 - テスト、型チェック、ビルドが成功する。
 
 ## 公式仕様への参照

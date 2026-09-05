@@ -348,6 +348,60 @@ test("WorkerはShutdown後の処理が長引いたら削除せず終了する", 
   );
 });
 
+test("WorkerはShutdown要求時に処理関数のAbortSignalを中断する", async () => {
+  let worker!: AnalyzeWorker;
+  let signalAborted = false;
+  const queue = createQueue({
+    receiveOne: async () => createJob(),
+  });
+  worker = new AnalyzeWorker({
+    queue,
+    handleJob: async (_job, options) => {
+      options?.signal.addEventListener("abort", () => {
+        signalAborted = true;
+      });
+      worker.requestShutdown();
+      await Promise.resolve();
+    },
+  });
+
+  await worker.run();
+
+  assert.equal(signalAborted, true);
+});
+
+test("WorkerのShutdown期限は処理関数とDeleteMessageで共有する", async () => {
+  let worker!: AnalyzeWorker;
+  let deleteCount = 0;
+  const startedAt = Date.now();
+  const { events, logger } = createLogger();
+  const queue = createQueue({
+    receiveOne: async () => createJob(),
+    deleteMessage: async () => {
+      deleteCount += 1;
+      await new Promise<void>(() => undefined);
+    },
+  });
+  worker = new AnalyzeWorker({
+    queue,
+    logger,
+    shutdownTimeoutMs: 60,
+    handleJob: async () => {
+      worker.requestShutdown();
+      await new Promise<void>((resolve) => setTimeout(resolve, 40));
+    },
+  });
+
+  await worker.run();
+
+  assert.equal(deleteCount, 1);
+  assert.equal(Date.now() - startedAt < 90, true);
+  assert.equal(
+    events.some(({ fields }) => fields.event === "worker_delete_shutdown_timeout"),
+    true,
+  );
+});
+
 test("WorkerはShutdown後のDeleteが長引いたら終了して再配送に任せる", async () => {
   let worker!: AnalyzeWorker;
   let deleteCount = 0;

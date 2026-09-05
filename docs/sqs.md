@@ -49,7 +49,7 @@ SQS ReceiveMessage
 
 Phase 5の確認用Consumerは`src/queue/analyze-job-consumer.ts`の`consumeOneAnalyzeJob`である。`npm run consume:analyze`を実行すると、最大1件を受信し、Validation済みのMessageだけをReceiptHandleで削除する。これは常駐Workerとは異なる。
 
-Phase 6の常駐Workerは`src/worker/analyze-worker.ts`にあり、`npm run worker`で起動する。Workerは1件ずつ処理し、処理成功後にだけDeleteMessageする。処理失敗、不正Message、Delete失敗では削除せず、Worker自体は継続する。Receiveエラーでは指数バックオフを行う。SIGTERM / SIGINTでは新規受信を止め、Long PollingをAbortしてから終了する。
+Phase 6の常駐Workerは`src/worker/analyze-worker.ts`にあり、`npm run worker`で起動する。Workerは1件ずつ処理し、処理成功後にだけDeleteMessageする。処理失敗、不正Message、Delete失敗では削除せず、Worker自体は継続する。Receiveエラーでは指数バックオフを行う。SIGTERM / SIGINTでは新規受信を止め、Long PollingをAbortする。処理中Jobは通常完了を待つが、Shutdown要求後30秒を超えて完了しない場合は削除せず終了する。
 
 ## RetryとDLQ
 

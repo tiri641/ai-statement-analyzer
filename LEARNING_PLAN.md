@@ -94,7 +94,7 @@
 
 ## Phase 6: ECS Worker
 
-- 作るもの: SQS long polling Worker、SIGTERM、heartbeatの骨格。
+- 作るもの: SQS long polling Worker、SIGTERM、処理中JobのShutdown制御。Heartbeatは後続Phaseで実装する。
 - 必要性: 常駐APIと重い処理を分離し、ECS停止時も処理を壊さない。
 - 内部処理: Receive -> handler -> ack or leave for retry、SIGTERMでreceive停止。
 - 選択肢: Lambda、ECS、Kubernetes。推奨はECS Fargate。
