@@ -14,9 +14,15 @@ export interface ReceivedAnalyzeJob extends AnalyzeJobMessage {
   receiveCount: number;
 }
 
+export interface ReceiveAnalyzeJobOptions {
+  signal?: AbortSignal;
+}
+
 export interface AnalyzeJobQueue {
   sendAnalyzeJob(statementId: string): Promise<void>;
-  receiveOne(): Promise<ReceivedAnalyzeJob | null>;
+  receiveOne(
+    options?: ReceiveAnalyzeJobOptions,
+  ): Promise<ReceivedAnalyzeJob | null>;
   deleteMessage(receiptHandle: string): Promise<void>;
 }
 

@@ -42,6 +42,12 @@ flowchart LR
 | PostgreSQL | 状態、構造化取引、制約、正確な集計 | LLMの解釈 |
 | Bedrock | OCR、merchant正規化、分類、Analyticsの解釈 | 金額の確定計算、DB整合性保証 |
 
+### Phase 6の現行実装
+
+Phase 6では、ECSへデプロイする前のWorkerプロセスをローカルで実装した。WorkerはSQSをLong Pollingし、Messageを1件ずつ注入された処理関数へ渡す。処理関数が成功した場合だけDeleteMessageし、処理失敗やDelete失敗ではMessageを削除しない。SIGTERM / SIGINTでは新しい受信を停止し、Long PollingをAbortして処理中Jobの完了を待つ。
+
+現時点の処理関数は安全なログ記録だけであり、S3取得、Bedrock、DB Transaction、冪等な状態更新は後続Phaseの責務である。ECS Fargateの`stopTimeout=30秒`はPhase 13でTask Definitionへ設定する。
+
 ## Upload Sequence
 
 ```mermaid

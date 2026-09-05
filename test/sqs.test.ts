@@ -107,6 +107,31 @@ test("SqsJobQueueはMessageを受信してstatementIdを取り出す", async () 
   });
 });
 
+test("SqsJobQueueはReceiveMessageへAbortSignalを渡す", async () => {
+  const abortController = new AbortController();
+  let sendOptions: { abortSignal?: AbortSignal } | undefined;
+  const client = {
+    send: async (
+      command: { input: Record<string, unknown> },
+      options?: { abortSignal?: AbortSignal },
+    ) => {
+      sendOptions = options;
+      return {
+        Messages: [],
+      };
+    },
+  } as unknown as SQSClient;
+  const queue = new SqsJobQueue({
+    queueUrl,
+    region: "ap-northeast-1",
+    client,
+  });
+
+  await queue.receiveOne({ signal: abortController.signal });
+
+  assert.equal(sendOptions?.abortSignal, abortController.signal);
+});
+
 test("Messageが空のときSqsJobQueueはnullを返す", async () => {
   const client = {
     send: async () => ({ Messages: [] }),

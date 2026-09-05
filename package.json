@@ -12,6 +12,7 @@
     "api": "tsx src/server.ts",
     "migrate": "tsx src/migrate.ts",
     "consume:analyze": "tsx src/queue/consume-once.ts",
+    "worker": "tsx src/worker.ts",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
