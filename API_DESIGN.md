@@ -44,7 +44,7 @@ APIの成功レスポンスはFrontend向けの公開DTOに変換し、s3_key、
     "headers": {
       "Content-Type": "image/jpeg"
     },
-      "expiresInSeconds": 300
+    "expiresInSeconds": 300
   }
 }
 ```

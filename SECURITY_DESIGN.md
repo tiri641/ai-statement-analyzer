@@ -40,7 +40,7 @@ APIは s3:GetObject や bedrock:InvokeModel を持たない。APIが画像を読
 ### Worker Task Role
 
 - SQS: main queueへの sqs:ReceiveMessage、sqs:DeleteMessage、sqs:ChangeMessageVisibility、必要な sqs:GetQueueAttributes
-- S3: private bucketの対象prefixへの s3:GetObject、s3:HeadObject
+- S3: private bucketの対象prefixへの s3:GetObject。`HeadObject`は独立したIAM Actionではなく、S3の`GetObject`権限で認可される
 - Bedrock: 許可したモデルの bedrock:InvokeModel。Converse実行時も必要なResource条件を確認する
 - Secrets Manager: DB secret 1件への secretsmanager:GetSecretValue
 - SSE-KMSを採用する場合: 画像暗号化に使うKMS keyのDecrypt
