@@ -16,6 +16,14 @@ function createTestApp(database: HealthDatabase) {
         throw new Error("test-only repository");
       },
       findById: async () => null,
+      markUploaded: async () => null,
+    },
+    objectStore: {
+      createPresignedPutUrl: async () => "https://s3.example.test/upload",
+      headObject: async () => ({
+        contentType: "image/jpeg",
+        contentLength: 1024,
+      }),
     },
   });
 }

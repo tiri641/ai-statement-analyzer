@@ -1,0 +1,8 @@
+{
+  "app": "npx tsx infra/bin/app.ts",
+  "context": {
+    "region": "ap-northeast-1",
+    "frontendOrigin": "http://localhost:5173",
+    "rawRetentionDays": 7
+  }
+}

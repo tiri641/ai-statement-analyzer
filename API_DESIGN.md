@@ -4,7 +4,7 @@
 
 APIはHTTPの受付、入力Validation、認可、DB参照・更新、SQS送信を担当する。画像本体のproxy、同期Bedrock OCR、LLMへの金額計算依頼は行わない。
 
-Phase 3では認証・認可をまだ実装していないため、APIサーバーはloopback hostでのみ起動を許可する。公開環境での起動には、後続Phaseで認証Middlewareとowner_id条件を追加する。
+Phase 4時点でも認証・認可はまだ実装していないため、APIサーバーはloopback hostでのみ起動を許可する。公開環境での起動には、後続Phaseで認証Middlewareとowner_id条件を追加する。
 
 APIの成功レスポンスはFrontend向けの公開DTOに変換し、s3_key、processing token、内部failure詳細を返さない。Presigned URLはPhase 4で、指定したS3 Objectへの短時間のPUTに限って返す。エラーは構造化したcodeを返す。
 
@@ -44,24 +44,22 @@ APIの成功レスポンスはFrontend向けの公開DTOに変換し、s3_key、
     "headers": {
       "Content-Type": "image/jpeg"
     },
-    "expiresInSeconds": 600
+    "expiresInSeconds": 300
   }
 }
 ```
 
 実際のURLは短期Bearer tokenなのでログへ出さない。署名対象のContent-TypeとFrontendのPUT時Content-Typeを一致させる。
 
-Phase 3ではS3未接続のため、`upload`は`null`を返す。Phase 4でAPIがPresigned URLを返し、FrontendがそのURLへ画像本体をHTTP PUTする。
-
 ```text
-Phase 3:
 Frontend --POST /statements--> API
            画像情報だけ          ↓
-                              PostgreSQL
-
-Phase 4:
+             Presigned URL + PostgreSQL: UPLOAD_PENDING
 Frontend --PUT Presigned URL--> S3
            画像本体
+Frontend --POST upload/complete--> API --HeadObject--> S3
+                                      ↓
+                              PostgreSQL: UPLOADED
 ```
 
 ### Errors
@@ -71,23 +69,49 @@ Frontend --PUT Presigned URL--> S3
 - 413 FILE_TOO_LARGE: 画像サイズ上限超過
 - 409 STATEMENT_CONFLICT: DBの一意制約などによる競合
 - 404 STATEMENT_NOT_FOUND: 指定したstatementが存在しない
+- 404 UPLOAD_NOT_FOUND: S3に画像が存在しない
+- 409 UPLOAD_METADATA_MISMATCH: S3のContent-TypeまたはContent-Lengthが期待値と異なる
+- 409 STATEMENT_NOT_UPLOADABLE: FAILEDなど、アップロード完了にできない状態
 - 503 DEPENDENCY_UNAVAILABLE: DBまたはS3 signing依存障害
 
 ## PUT Presigned URL
 
 これはAPI Endpointではなく、FrontendがS3へ直接送る。成功後、FrontendはS3の200を確認して次のEndpointを呼ぶ。PUT失敗時に解析開始を呼ばない。
 
-Phase 3ではこのPUTはまだ実行しない。Phase 4で、APIが`statements.s3_key`を使ってPresigned URLを発行し、FrontendがURLの`body`へ選択した画像の`File`を設定してPUTする。
+Phase 4では、APIが`statements.s3_key`を使ってPresigned URLを発行し、FrontendがURLの`body`へ選択した画像の`File`を設定してPUTする。署名時と同じContent-TypeをHeaderへ設定する。
+
+## POST /statements/{id}/upload/complete
+
+### 処理
+
+1. UUIDをValidationする。
+2. statementを取得する。
+3. `UPLOAD_PENDING`の場合、S3 `HeadObject`でObjectの存在を確認する。
+4. S3のContent-TypeとContent-LengthをDBに保存した期待値と比較する。
+5. 一致した場合だけ、`WHERE status = 'UPLOAD_PENDING'`の条件付きUPDATEで`UPLOADED`にする。
+6. `UPLOADED`以降の場合はS3を再確認せず現在の状態を返す。
+
+### Response 200 OK
+
+```json
+{
+  "statementId": "019abc00-0000-7000-8000-000000000001",
+  "status": "UPLOADED"
+}
+```
+
+PUT前の呼び出しは404、Metadata不一致は409、S3やDBの一時障害は503にする。失敗時は`UPLOAD_PENDING`を維持し、後から再試行できるようにする。このEndpointではSQSへの解析ジョブ投入を行わない。
 
 ## POST /statements/{id}/analyze
 
 ### 処理
 
 1. UUIDと所有者をValidationする。
-2. S3 HeadObjectで画像存在、Content-Length、Content-Typeを再確認する。
-3. DBを条件付きでUPLOAD_PENDING -> UPLOADED -> QUEUEDへ更新する。
-4. SQS Standard Queueに {"statementId":"..."} だけを送信する。
-5. 202 Acceptedを返す。
+2. `UPLOADED`のstatementだけを条件付きで`QUEUED`へ更新する。
+3. SQS Standard Queueに `{"statementId":"..."}` だけを送信する。
+4. 202 Acceptedを返す。
+
+画像の存在、Content-Type、Content-Lengthの確認は、Phase 4の`upload/complete`で完了していることを前提にする。
 
 ### Response 202 Accepted
 

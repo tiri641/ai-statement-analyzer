@@ -28,7 +28,7 @@ flowchart LR
 - ECS Clusterは1つだけ作り、APIとWorkerは別Serviceにする。Worker専用VPCやClusterは作らない。
 - ALBはPublic Subnet、ECS API / WorkerはPrivate Subnet、RDSはDB Private Subnetに置く。
 - ECS APIとWorkerは同じECR Imageを使い、ECSのcommandだけを変える案をMVPの推奨とする。APIとWorkerのTask Roleは分離する。
-- S3は非公開、Block Public Access有効、バケットポリシーは必要なPrincipalのみにする。FrontendはAWS Credentialsを持たない。
+- S3はPhase 4のCDK `StorageStack`で作成し、非公開、Block Public Access有効、暗号化、Lifecycleを設定する。Phase 13では同じバケットを参照する。FrontendはAWS Credentialsを持たない。
 - RDSへのInboundはAPI / WorkerのSecurity Groupからのみ許可する。RDSからInternetへの通信は不要な設計を目標にする。
 - ALBはHTTPSを正規入口とし、ACM証明書でTLS終端する。HTTPはHTTPSへredirectする。
 
@@ -56,9 +56,12 @@ sequenceDiagram
     API-->>FE: statementId + short-lived Presigned PUT URL
     FE->>S3: PUT image with exact signed headers
     S3-->>FE: 200 OK
-    FE->>API: POST /statements/{id}/analyze
+    FE->>API: POST /statements/{id}/upload/complete
     API->>S3: HEAD Object (upload verification)
-    API->>DB: UPLOAD_PENDING -> UPLOADED -> QUEUED
+    API->>DB: UPLOAD_PENDING -> UPLOADED
+    API-->>FE: 200 UPLOADED
+    FE->>API: POST /statements/{id}/analyze (Phase 5)
+    API->>DB: UPLOADED -> QUEUED
     API-->>FE: 202 Accepted
 ```
 

@@ -29,7 +29,8 @@ ECS Worker -> private S3 / Bedrock / PostgreSQL
 
 Resource ARNを対象bucket、queue、secretに限定する。
 
-- S3: Presigned PUTの署名対象となる s3:PutObject、upload確認用の対象keyへの s3:GetObject。S3 APIのHeadObjectは独立したIAM actionではなくGetObjectで認可されるため、実装ではkey prefixを狭くする。画像本文をAPIで読む必要がなければ、HeadObject確認をWorkerへ寄せてAPIのGetObjectを外す案も比較する。
+- S3: Presigned PUTの署名対象となる対象prefixへの `s3:PutObject`、upload確認用の対象keyへの `s3:GetObject`。S3 APIのHeadObjectは独立したIAM actionではなくGetObjectで認可されるため、実装ではkey prefixを狭くする。
+- HeadObjectで存在しないObjectを404として扱うため、bucket ARNに対する `s3:ListBucket` を `s3:prefix = statements/` のCondition付きで許可する。`s3:ListAllMyBuckets`は許可しない。ListBucketを付けない場合、存在しないObjectでもS3が403を返すことがあるため、権限障害と未存在を区別できない。
 - SQS: main queueへの sqs:SendMessage
 - Secrets Manager: DB secret 1件への secretsmanager:GetSecretValue
 - 必要時のみKMS keyへのEncrypt / GenerateDataKey
@@ -39,7 +40,7 @@ APIは s3:GetObject や bedrock:InvokeModel を持たない。APIが画像を読
 ### Worker Task Role
 
 - SQS: main queueへの sqs:ReceiveMessage、sqs:DeleteMessage、sqs:ChangeMessageVisibility、必要な sqs:GetQueueAttributes
-- S3: private bucketの対象prefixへの s3:GetObject、s3:HeadObject
+- S3: private bucketの対象prefixへの s3:GetObject。`HeadObject`は独立したIAM Actionではなく、S3の`GetObject`権限で認可される
 - Bedrock: 許可したモデルの bedrock:InvokeModel。Converse実行時も必要なResource条件を確認する
 - Secrets Manager: DB secret 1件への secretsmanager:GetSecretValue
 - SSE-KMSを採用する場合: 画像暗号化に使うKMS keyのDecrypt
@@ -65,7 +66,7 @@ ApplicationのTask Roleと混同しない。ECS AgentがECRからimageをpullし
 - SSE-KMSではPresigned PUTのsigned headers、KMS key policy、API signerのKMS権限を検証する。設定ミスでアップロードを壊さない。
 - PutObjectに必要なContent-Type等を署名し、許可Content-Type・size上限をAPIとS3側で二重に検査する。
 - 未完了multipart uploadはLifecycleで早期abortする。
-- 原画像prefixは処理完了後、または作成後の最大保持日数で自動削除する。推奨MVPは30日、厳格な保持縮小案は7日。
+- 原画像prefixはCDK Lifecycleで作成後7日を最大保持期間として自動削除する。再OCRや障害調査の余裕が必要になった場合は、運用要件とリスクを見直して変更する。
 - FrontendからのS3 PUTはS3のRegional HTTPS endpointを使う。Bucketはprivateのままにする。
 
 ## Network / Security Group
@@ -83,7 +84,7 @@ ApplicationのTask Roleと混同しない。ECS AgentがECRからimageをpullし
 - APIはJSON body、画像metadata、queryをサイズ・文字数・列挙値で制限する。
 - Content-Typeだけを信用せず、Workerが画像magic bytes / decoderで再確認する。
 - 本番公開時は認証・所有者チェックを必須とする。認証なしの単一ユーザーMVPはlocalhostまたは閉じた学習環境に限る。
-- Phase 3のAPIは認証が未実装のため、`HOST`が`127.0.0.1`、`::1`、`localhost`以外の場合は起動を拒否する。この制限は認証Middlewareと`owner_id`条件を実装した後に見直す。
+- Phase 4のAPIは認証が未実装のため、`HOST`が`127.0.0.1`、`::1`、`localhost`以外の場合は起動を拒否する。この制限は認証Middlewareと`owner_id`条件を実装した後に見直す。
 
 ## Secrets
 

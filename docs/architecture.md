@@ -32,8 +32,10 @@ sequenceDiagram
   A->>D: INSERT UPLOAD_PENDING
   A-->>F: Presigned PUT URL
   F->>S: PUT image
-  F->>A: POST /analyze
+  F->>A: POST /upload/complete
   A->>S: HeadObject
+  A->>D: UPLOAD_PENDING -> UPLOADED
+  F->>A: POST /analyze (Phase 5)
   A->>D: UPLOADED -> QUEUED
 ```
 
@@ -86,4 +88,3 @@ sequenceDiagram
   B-->>A: validated interpretation
   A-->>F: Insights
 ```
-
