@@ -5,12 +5,14 @@ import { createApp } from "./app.js";
 import { StatementRepository } from "./database/statement-repository.js";
 import { isLoopbackHost } from "./server-safety.js";
 import { S3ObjectStore } from "./storage/s3-object-store.js";
+import { SqsJobQueue } from "./queue/sqs-job-queue.js";
 
 const port = Number(process.env.PORT ?? "3000");
 const host = process.env.HOST ?? "127.0.0.1";
 const databaseUrl = process.env.DATABASE_URL;
 const awsRegion = process.env.AWS_REGION ?? "ap-northeast-1";
 const s3BucketName = process.env.S3_BUCKET_NAME;
+const sqsQueueUrl = process.env.SQS_QUEUE_URL;
 const presignedUrlExpiresSeconds = Number(
   process.env.S3_PRESIGNED_URL_EXPIRES_SECONDS ?? "300",
 );
@@ -45,6 +47,16 @@ if (!s3BucketName) {
   process.exit(1);
 }
 
+if (!sqsQueueUrl) {
+  console.error(
+    JSON.stringify({
+      event: "api_start_failed",
+      errorCode: "SQS_QUEUE_URL_MISSING",
+    }),
+  );
+  process.exit(1);
+}
+
 if (
   !Number.isInteger(presignedUrlExpiresSeconds) ||
   presignedUrlExpiresSeconds < 1 ||
@@ -69,6 +81,10 @@ const app = createApp({
   statements: new StatementRepository(pool),
   objectStore: new S3ObjectStore({
     bucketName: s3BucketName,
+    region: awsRegion,
+  }),
+  jobQueue: new SqsJobQueue({
+    queueUrl: sqsQueueUrl,
     region: awsRegion,
   }),
   presignedUrlExpiresSeconds,

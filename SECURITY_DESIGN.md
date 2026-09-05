@@ -51,6 +51,10 @@ Workerは s3:PutObject、SQS SendMessage、管理者権限を持たない。
 
 ApplicationのTask Roleと混同しない。ECS AgentがECRからimageをpullし、CloudWatch Logsへログを送り、Secrets Managerのsecret injectionを使う場合の実行権限を持つ。少なくともECR pull、CloudWatch Logs stream / put、必要なsecret取得だけにする。
 
+### CDK / CloudFormation実行Role
+
+CDKがCloudFormationへStack作成を依頼する場合、リソース作成はCloudFormation実行Roleの権限で行われる。Phase 5では既存のS3用実行Roleに、`MessagingStack-*`という名前のSQS Queueに対するCreate、属性設定、Tag、削除だけを許可するインラインポリシーを追加した。これはデプロイ用の権限であり、APIやWorkerのTask Roleへ付与してはいけない。運用環境ではStack単位のデプロイRole、権限境界、削除方針を別途管理する。
+
 ### 禁止
 
 - AdministratorAccess

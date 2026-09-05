@@ -11,6 +11,7 @@
     "dev": "tsx watch src/server.ts",
     "api": "tsx src/server.ts",
     "migrate": "tsx src/migrate.ts",
+    "consume:analyze": "tsx src/queue/consume-once.ts",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
@@ -19,10 +20,14 @@
     "cdk:diff:storage": "cdk diff StorageStack",
     "cdk:deploy:storage": "cdk deploy StorageStack",
     "cdk:destroy:storage": "cdk destroy StorageStack",
+    "cdk:diff:messaging": "cdk diff MessagingStack",
+    "cdk:deploy:messaging": "cdk deploy MessagingStack",
+    "cdk:destroy:messaging": "cdk destroy MessagingStack",
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1127.0",
+    "@aws-sdk/client-sqs": "^3.1127.0",
     "@aws-sdk/s3-request-presigner": "^3.1127.0",
     "@hono/node-server": "2.1.1",
     "dotenv": "17.4.2",
