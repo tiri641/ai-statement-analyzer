@@ -4,7 +4,7 @@
 
 クレジットカード明細画像をS3へ直接アップロードし、SQS経由のECS WorkerがAmazon BedrockでOCR・merchant正規化・カテゴリ分類を行う学習用アプリケーションである。PostgreSQLを数値の正とし、SQL AnalyticsをBedrockが解釈してAI Insightsを作る。
 
-Phase 3までのローカルAPI、Database、明細登録・状態取得APIを実装済み。Phase 3の`POST /statements`は画像情報をDBへ登録するだけで、Responseの`upload`は`null`である。実際のS3 UploadとPresigned URLはPhase 4で追加する。
+Phase 4までのローカルAPI、Database、S3 Upload、Presigned URLを実装済み。`POST /statements`は短期Presigned PUT URLを返し、Frontendまたはcurlが画像をS3へ直接送る。`POST /statements/{id}/upload/complete`がS3の実体を確認して、`UPLOAD_PENDING`を`UPLOADED`へ更新する。
 
 ## Architecture
 
@@ -30,7 +30,7 @@ Frontend
 - Worker: TypeScript、SQS Long Polling
 - AWS: ECS Fargate、ALB、ECR、S3、SQS、RDS、Bedrock、CloudWatch、IAM、VPC
 - Frontend候補: Vite + React + TypeScript（Decision Required）
-- Infrastructure: AWS CDK + TypeScript
+- Infrastructure: AWS CDK + TypeScript（Phase 4はS3 StorageStackのみ）
 
 ## ローカル環境
 
@@ -47,14 +47,17 @@ APIはホストのNode.jsで起動し、PostgreSQLだけをDocker Composeで起�
 1. `cp .env.example .env`
 2. `npm install`
 3. `docker compose up -d db`
-4. `npm run migrate`
-5. `npm run api`
-6. 別の端末で `curl http://127.0.0.1:3000/health`
-7. `curl http://127.0.0.1:3000/health/db`
+4. Phase 4のAPIを起動するには、`npm run cdk:deploy:storage`を実行し、Outputの`S3BucketName`を`.env`の`S3_BUCKET_NAME`へ設定する
+5. `npm run migrate`
+6. `npm run api`
+7. 別の端末で `curl http://127.0.0.1:3000/health`
+8. `curl http://127.0.0.1:3000/health/db`
 
 開発中は `npm run dev` も使用できる。DBを停止する場合は `docker compose stop db`、終了する場合は `docker compose down`を使う。`docker compose down -v`はNamed Volumeを削除するため、意図的なデータ削除時以外は使用しない。
 
-Phase 2でMigrationと業務テーブルを追加し、Phase 3でAPI入力検証と明細APIを追加した。AWSサービスはまだ追加していない。
+Phase 4のAPI起動とCDK操作には、ローカルのAWS CLI ProfileまたはSSO認証が必要である。AWS認証情報をFrontend、ソースコード、`.env`へAccess Keyとして保存しない。認証情報がない場合でも、`npm test`、`npm run typecheck`、`npm run build`、`npm run cdk:synth`は実行できる。
+
+Phase 2でMigrationと業務テーブル、Phase 3でAPI入力検証と明細API、Phase 4でS3/CDKとPresigned URLを追加した。SQS、Bedrock、ECS、VPCはまだ追加していない。
 
 ## Environment Variables
 
@@ -88,7 +91,7 @@ APIの契約は [API_DESIGN.md](API_DESIGN.md)、WorkerとSQSの説明は [docs/
 
 ## AWS Deploy
 
-Phase 13でCDKを追加し、VPC、ALB、ECS、RDS、S3、SQS、DLQ、IAM、CloudWatchを段階的にdeployする。設計承認前にAWS Resourceを作成しない。
+Phase 4ではS3だけをCDKでdeployする。`npm run cdk:synth`で確認し、`npm run cdk:deploy:storage`で`StorageStack`をdeployする。Outputの`S3BucketName`を未commitの`.env`へ設定する。Phase 13ではこのバケットを再作成せず、VPC、ALB、ECS、RDS、SQS、DLQ、IAM、CloudWatchを追加する。
 
 ## Cost
 
@@ -104,4 +107,4 @@ S3 Block Public Access、短期Presigned URL、HTTPS、Private RDS、Security Gr
 
 ## 設計レビュー
 
-Phase 1、Phase 2、Phase 3は完了した。Phase 4へ進む前に、Phase 3の実装・テスト・学習記録を確認する。認証なしAPIはloopback host以外で起動できない。Bedrock Model、Frontend、NAT / Endpoint、Insights API、Image共有、Worker scaling、S3 retention、認証の設計判断は後続Phaseで使用する。
+Phase 1、Phase 2、Phase 3、Phase 4は完了した。認証なしAPIはloopback host以外で起動できない。Phase 4のS3画像はLifecycleで7日後に削除され、Stack削除時は`RETAIN`でバケットを残す。AWSへ接続しない単体テストではFake S3を使用する。Bedrock Model、Frontend、NAT / Endpoint、Insights API、Image共有、Worker scaling、認証の設計判断は後続Phaseで使用する。

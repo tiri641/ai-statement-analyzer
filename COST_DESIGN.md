@@ -8,7 +8,7 @@
 - 1か月 = 730時間。
 - Learningの概算: API 1 task、Worker 1 task、各0.25 vCPU / 0.5 GiB、ALB 1台・0.5 LCU、RDS PostgreSQL db.t4g.micro Single-AZ・gp3 20GB、NAT 1台、ECR 2GB、Secrets 2件、CloudWatchログ1GB/月。
 - Production-likeの概算: API 2 task、Worker 2 task、同じtaskサイズ、ALB 1台・0.5 LCU、RDS Multi-AZ相当、NAT 2台、同じECR / Secrets。
-- 画像100枚/月、1画像5MB、画像は最大30日保持、OCR 100回、Insights生成1回/月を例にする。
+- 画像100枚/月、1画像5MB、画像は最大7日保持、OCR 100回、Insights生成1回/月を例にする。Phase 4のS3 Lifecycleも7日にする。
 - Bedrockの入力tokenは画像内容・解像度・モデルで変わるため、以下のBedrock金額は計画用の例であり、実際のUsageを確認する。
 
 料金は変更される。デプロイ前にAWS Pricing Calculatorと各サービスのRegion別ページで再計算する。
@@ -109,7 +109,7 @@ Insightsをinput 4,000、output 500 tokensで1回行うと約$0.00715。画像�
 - RDSは停止中にDB instance hoursがかからないが、storage、backup、必要なPublic IPv4等は残る。停止DBは7日後に自動再起動する。
 - RDS停止はProductionの可用性設計ではなく、Learningの節約手段である。
 - ALB、NAT、Interface Endpoint、ECR、Secrets、S3、CloudWatchはECS停止・RDS停止だけではゼロにならない。
-- S3 raw imageはLifecycleで30日、または承認後7日に削除する。incomplete uploadは1日程度でabortする。
+- S3 raw imageはLifecycleで7日に削除する。incomplete uploadは1日程度でabortする。
 - CloudWatch Logs retentionは7〜30日から開始し、debugログ量を抑える。重要なAlarmは削除しない。
 
 ## サービス別料金の参照先
@@ -147,7 +147,7 @@ Insightsをinput 4,000、output 500 tokensで1回行うと約$0.00715。画像�
 - 学習中のAWS環境を常時起動するか、セッション単位で起動・停止するか。推奨は後者。
 - LearningはNAT 1台、Production-likeはNAT 2台で承認するか。
 - private path要件がある場合、6種類のInterface Endpointを2 AZへ置くか。
-- S3 raw imageの保持を30日または7日にするか。
+- S3 raw imageの保持を7日から変更する必要があるか。
 - Cost Alarmの月額閾値（例: $50 Learning、$250 Production-like）を決めるか。
 
 ## 価格確認メモ

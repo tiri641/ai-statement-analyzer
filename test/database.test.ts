@@ -238,6 +238,25 @@ databaseTest("statementsの状態を更新できる", async () => {
   assert.equal(updated?.status, "QUEUED");
 });
 
+databaseTest("UPLOAD_PENDINGのstatementだけをUPLOAD済みに更新できる", async () => {
+  assert.ok(repository);
+
+  await repository.create({
+    id: statementId,
+    s3Key: "statements/statement-1.jpg",
+    targetMonth: "2026-08",
+    contentType: "image/jpeg",
+    contentLength: 1024,
+    status: "UPLOAD_PENDING",
+  });
+
+  const updated = await repository.markUploaded(statementId);
+  assert.equal(updated?.status, "UPLOADED");
+
+  const secondUpdate = await repository.markUploaded(statementId);
+  assert.equal(secondUpdate, null);
+});
+
 databaseTest("同じs3_keyは重複登録できない", async () => {
   assert.ok(repository);
 

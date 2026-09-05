@@ -14,9 +14,16 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
+    "typecheck:infra": "tsc -p tsconfig.infra.json",
+    "cdk:synth": "cdk synth",
+    "cdk:diff:storage": "cdk diff StorageStack",
+    "cdk:deploy:storage": "cdk deploy StorageStack",
+    "cdk:destroy:storage": "cdk destroy StorageStack",
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1127.0",
+    "@aws-sdk/s3-request-presigner": "^3.1127.0",
     "@hono/node-server": "2.1.1",
     "dotenv": "17.4.2",
     "hono": "4.13.5",
@@ -26,6 +33,9 @@
   "devDependencies": {
     "@types/node": "26.4.0",
     "@types/pg": "^8.23.1",
+    "aws-cdk": "^2.1140.0",
+    "aws-cdk-lib": "^2.268.0",
+    "constructs": "^10.8.1",
     "tsx": "4.23.13",
     "typescript": "7.0.2"
   }

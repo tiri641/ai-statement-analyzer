@@ -77,10 +77,18 @@ Status: 実装・動作確認完了。Zod Validation、Migration 003、明細作
 
 ### Phase 4: S3
 
-1. S3 clientとkey生成を追加する。
-2. Presigned PUTを追加する。
-3. HeadObjectでupload確認を追加する。
-4. private access、TTL、Content-Type mismatchを確認する。
+1. S3-onlyのCDK `StorageStack`を作る。
+2. S3 clientとUUIDベースのkey生成を追加する。
+3. Presigned PUTを追加する。
+4. HeadObjectでupload確認を追加する。
+5. `UPLOAD_PENDING -> UPLOADED`の条件付き状態更新を追加する。
+6. private access、TLS、暗号化、7日Lifecycle、CORS、Content-Type mismatchを確認する。
+
+Status: 実装・動作確認完了。CDKでS3を管理し、AWS SDK v3のPresigned URL、Fake S3テスト、HeadObject確認、Metadata比較、Repositoryの条件付き更新を追加した。`npm test`、typecheck、build、`cdk synth`に成功した。
+
+学習記録は[plans/phase-04.md](plans/phase-04.md)と[learning/phase-04.md](learning/phase-04.md)に記録する。
+
+次のGate: Phase 4のS3直接Upload、Presigned URL、完了確認、CDK設定、Lifecycle、AWS CredentialsをFrontendへ渡さない理由を説明できること。
 
 ### Phase 5: SQS
 

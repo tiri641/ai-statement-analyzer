@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createApp } from "../src/app.ts";
+import { createApp, type StatementStore } from "../src/app.ts";
 import { UniqueConstraintError } from "../src/database/errors.ts";
 import type {
   CreateStatementInput,
   StatementRecord,
 } from "../src/database/statement-repository.ts";
+import type { StatementObjectStore } from "../src/storage/object-store.ts";
 
 const statementId = "019abc00-0000-7000-8000-000000000001";
 
@@ -33,20 +34,43 @@ function createStatementRecord(
 function createTestApp(options: {
   create?: (input: CreateStatementInput) => Promise<StatementRecord>;
   findById?: (id: string) => Promise<StatementRecord | null>;
+  markUploaded?: (id: string) => Promise<StatementRecord | null>;
+  objectStore?: Partial<StatementObjectStore>;
 } = {}) {
+  const objectStore: StatementObjectStore = {
+    createPresignedPutUrl: async () => "https://s3.example.test/upload",
+    headObject: async () => ({
+      contentType: "image/jpeg",
+      contentLength: 5242880,
+    }),
+    ...options.objectStore,
+  };
+  const statements: StatementStore = {
+    create: options.create ?? (async () => createStatementRecord()),
+    findById: options.findById ?? (async () => createStatementRecord()),
+    markUploaded:
+      options.markUploaded ??
+      (async () => createStatementRecord({ status: "UPLOADED" })),
+  };
+
   return createApp({
     database: {
       query: async () => ({ rows: [] }),
     },
-    statements: {
-      create: options.create ?? (async () => createStatementRecord()),
-      findById: options.findById ?? (async () => createStatementRecord()),
-    },
+    statements,
+    objectStore,
   });
 }
 
 test("POST /statementsは入力を検証してstatementを作成する", async () => {
   let receivedInput: CreateStatementInput | undefined;
+  let presignedInput:
+    | {
+        key: string;
+        contentType: "image/jpeg" | "image/png";
+        expiresInSeconds: number;
+      }
+    | undefined;
   const app = createTestApp({
     create: async (input) => {
       receivedInput = input;
@@ -55,6 +79,12 @@ test("POST /statementsは入力を検証してstatementを作成する", async (
         id: input.id,
         s3Key: input.s3Key,
       });
+    },
+    objectStore: {
+      createPresignedPutUrl: async (input) => {
+        presignedInput = input;
+        return "https://s3.example.test/upload";
+      },
     },
   });
 
@@ -78,7 +108,12 @@ test("POST /statementsは入力を検証してstatementを作成する", async (
   assert.deepEqual(responseBody, {
     statementId: receivedInput.id,
     status: "UPLOAD_PENDING",
-    upload: null,
+    upload: {
+      method: "PUT",
+      url: "https://s3.example.test/upload",
+      headers: { "Content-Type": "image/jpeg" },
+      expiresInSeconds: 300,
+    },
   });
   assert.equal(receivedInput.ownerId, null);
   assert.equal(receivedInput.s3Key, `statements/${receivedInput.id}/source`);
@@ -86,6 +121,11 @@ test("POST /statementsは入力を検証してstatementを作成する", async (
   assert.equal(receivedInput.contentType, "image/jpeg");
   assert.equal(receivedInput.contentLength, 5242880);
   assert.equal(receivedInput.status, "UPLOAD_PENDING");
+  assert.deepEqual(presignedInput, {
+    key: receivedInput.s3Key,
+    contentType: "image/jpeg",
+    expiresInSeconds: 300,
+  });
 });
 
 test("POST /statementsはfilenameをS3 keyに使用しない", async () => {
@@ -306,6 +346,224 @@ test("DB障害の詳細を返さず503にする", async () => {
     error: {
       code: "DEPENDENCY_UNAVAILABLE",
       message: "依存サービスを利用できません。",
+    },
+  });
+});
+
+test("Presigned URL発行の障害を503にして詳細を返さない", async () => {
+  const app = createTestApp({
+    objectStore: {
+      createPresignedPutUrl: async () => {
+        throw new Error("secret=should-not-leak");
+      },
+    },
+  });
+
+  const response = await app.request("/statements", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      targetMonth: "2026-08",
+      fileName: "statement.jpg",
+      contentType: "image/jpeg",
+      contentLength: 1024,
+    }),
+  });
+  const body = await response.text();
+
+  assert.equal(response.status, 503);
+  assert.equal(body.includes("should-not-leak"), false);
+  assert.deepEqual(JSON.parse(body), {
+    error: {
+      code: "DEPENDENCY_UNAVAILABLE",
+      message: "依存サービスを利用できません。",
+    },
+  });
+});
+
+test("POST /statements/{id}/upload/completeはS3のMetadata一致時にUPLOADEDへ更新する", async () => {
+  let headObjectKey: string | undefined;
+  let markedUploadedId: string | undefined;
+  const app = createTestApp({
+    findById: async () => createStatementRecord(),
+    objectStore: {
+      headObject: async (key) => {
+        headObjectKey = key;
+        return { contentType: "image/jpeg", contentLength: 1024 };
+      },
+    },
+    markUploaded: async (id) => {
+      markedUploadedId = id;
+      return createStatementRecord({ status: "UPLOADED" });
+    },
+  });
+
+  const response = await app.request(
+    `/statements/${statementId}/upload/complete`,
+    { method: "POST" },
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    statementId,
+    status: "UPLOADED",
+  });
+  assert.equal(headObjectKey, `statements/${statementId}/source`);
+  assert.equal(markedUploadedId, statementId);
+});
+
+test("upload/completeはS3オブジェクトがない場合に404を返す", async () => {
+  const app = createTestApp({
+    objectStore: {
+      headObject: async () => {
+        const error = new Error("not found");
+        error.name = "ObjectNotFoundError";
+        throw error;
+      },
+    },
+  });
+
+  const response = await app.request(
+    `/statements/${statementId}/upload/complete`,
+    { method: "POST" },
+  );
+
+  assert.equal(response.status, 404);
+  assert.deepEqual(await response.json(), {
+    error: {
+      code: "UPLOAD_NOT_FOUND",
+      message: "アップロードされた画像が見つかりません。",
+    },
+  });
+});
+
+test("upload/completeはContent-Type不一致を409で拒否する", async () => {
+  const app = createTestApp({
+    objectStore: {
+      headObject: async () => ({
+        contentType: "image/png",
+        contentLength: 1024,
+      }),
+    },
+  });
+
+  const response = await app.request(
+    `/statements/${statementId}/upload/complete`,
+    { method: "POST" },
+  );
+
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), {
+    error: {
+      code: "UPLOAD_METADATA_MISMATCH",
+      message: "アップロードされた画像の情報が登録内容と一致しません。",
+    },
+  });
+});
+
+test("upload/completeはContent-Length不一致を409で拒否する", async () => {
+  const app = createTestApp({
+    objectStore: {
+      headObject: async () => ({
+        contentType: "image/jpeg",
+        contentLength: 2048,
+      }),
+    },
+  });
+
+  const response = await app.request(
+    `/statements/${statementId}/upload/complete`,
+    { method: "POST" },
+  );
+
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), {
+    error: {
+      code: "UPLOAD_METADATA_MISMATCH",
+      message: "アップロードされた画像の情報が登録内容と一致しません。",
+    },
+  });
+});
+
+test("upload/completeはS3の一時障害を503にして詳細を返さない", async () => {
+  const app = createTestApp({
+    objectStore: {
+      headObject: async () => {
+        throw new Error("aws-request-id=should-not-leak");
+      },
+    },
+  });
+
+  const response = await app.request(
+    `/statements/${statementId}/upload/complete`,
+    { method: "POST" },
+  );
+  const body = await response.text();
+
+  assert.equal(response.status, 503);
+  assert.equal(body.includes("should-not-leak"), false);
+  assert.deepEqual(JSON.parse(body), {
+    error: {
+      code: "DEPENDENCY_UNAVAILABLE",
+      message: "依存サービスを利用できません。",
+    },
+  });
+});
+
+test("upload/completeは既にUPLOADEDならS3を再確認せず同じ結果を返す", async () => {
+  let headCalled = false;
+  const app = createTestApp({
+    findById: async () => createStatementRecord({ status: "UPLOADED" }),
+    objectStore: {
+      headObject: async () => {
+        headCalled = true;
+        throw new Error("should not call S3");
+      },
+    },
+  });
+
+  const response = await app.request(
+    `/statements/${statementId}/upload/complete`,
+    { method: "POST" },
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { statementId, status: "UPLOADED" });
+  assert.equal(headCalled, false);
+});
+
+test("upload/completeはFAILEDのstatementを409で拒否する", async () => {
+  const app = createTestApp({
+    findById: async () => createStatementRecord({ status: "FAILED" }),
+  });
+
+  const response = await app.request(
+    `/statements/${statementId}/upload/complete`,
+    { method: "POST" },
+  );
+
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), {
+    error: {
+      code: "STATEMENT_NOT_UPLOADABLE",
+      message: "この明細はアップロード完了にできません。",
+    },
+  });
+});
+
+test("upload/completeは存在しないstatementに404を返す", async () => {
+  const app = createTestApp({ findById: async () => null });
+
+  const response = await app.request(
+    `/statements/${statementId}/upload/complete`,
+    { method: "POST" },
+  );
+
+  assert.equal(response.status, 404);
+  assert.deepEqual(await response.json(), {
+    error: {
+      code: "STATEMENT_NOT_FOUND",
+      message: "明細が見つかりません。",
     },
   });
 });

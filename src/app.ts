@@ -13,6 +13,8 @@ import type {
   CreateStatementInput,
   StatementRecord,
 } from "./database/statement-repository.js";
+import { ObjectNotFoundError } from "./storage/object-store.js";
+import type { StatementObjectStore } from "./storage/object-store.js";
 
 export interface HealthDatabase {
   query(text: string): Promise<unknown>;
@@ -21,11 +23,14 @@ export interface HealthDatabase {
 export interface StatementStore {
   create(input: CreateStatementInput): Promise<StatementRecord>;
   findById(id: string): Promise<StatementRecord | null>;
+  markUploaded(id: string): Promise<StatementRecord | null>;
 }
 
 export interface AppDependencies {
   database: HealthDatabase;
   statements: StatementStore;
+  objectStore: StatementObjectStore;
+  presignedUrlExpiresSeconds?: number;
 }
 
 type ApiErrorStatus = 400 | 404 | 409 | 413 | 503;
@@ -106,7 +111,28 @@ function toPublicStatement(statement: StatementRecord) {
   };
 }
 
-export function createApp({ database, statements }: AppDependencies) {
+function toUploadStatus(statement: StatementRecord) {
+  return {
+    statementId: statement.id,
+    status: statement.status,
+  };
+}
+
+function logStorageFailure(event: string) {
+  console.error(
+    JSON.stringify({
+      event,
+      errorCode: "DEPENDENCY_UNAVAILABLE",
+    }),
+  );
+}
+
+export function createApp({
+  database,
+  statements,
+  objectStore,
+  presignedUrlExpiresSeconds = 300,
+}: AppDependencies) {
   const app = new Hono();
 
   app.get("/health", (context) => {
@@ -209,13 +235,25 @@ export function createApp({ database, statements }: AppDependencies) {
       };
 
       try {
+        const uploadUrl = await objectStore.createPresignedPutUrl({
+          key: createInput.s3Key,
+          contentType: createInput.contentType,
+          expiresInSeconds: presignedUrlExpiresSeconds,
+        });
         const statement = await statements.create(createInput);
 
         return context.json(
           {
             statementId: statement.id,
             status: statement.status,
-            upload: null,
+            upload: {
+              method: "PUT",
+              url: uploadUrl,
+              headers: {
+                "Content-Type": createInput.contentType,
+              },
+              expiresInSeconds: presignedUrlExpiresSeconds,
+            },
           },
           201,
         );
@@ -239,6 +277,131 @@ export function createApp({ database, statements }: AppDependencies) {
       }
     },
   );
+
+  app.post("/statements/:id/upload/complete", async (context) => {
+    const parsedId = statementIdSchema.safeParse(context.req.param("id"));
+
+    if (!parsedId.success) {
+      return errorResponse(
+        context,
+        400,
+        "INVALID_REQUEST",
+        "入力内容が不正です。",
+      );
+    }
+
+    let statement: StatementRecord | null;
+
+    try {
+      statement = await statements.findById(parsedId.data);
+    } catch {
+      logDependencyFailure("upload_complete_statement_get_failed");
+      return errorResponse(
+        context,
+        503,
+        "DEPENDENCY_UNAVAILABLE",
+        "依存サービスを利用できません。",
+      );
+    }
+
+    if (!statement) {
+      return errorResponse(
+        context,
+        404,
+        "STATEMENT_NOT_FOUND",
+        "明細が見つかりません。",
+      );
+    }
+
+    if (statement.status === "FAILED") {
+      return errorResponse(
+        context,
+        409,
+        "STATEMENT_NOT_UPLOADABLE",
+        "この明細はアップロード完了にできません。",
+      );
+    }
+
+    if (statement.status !== "UPLOAD_PENDING") {
+      return context.json(toUploadStatus(statement));
+    }
+
+    let objectMetadata;
+
+    try {
+      objectMetadata = await objectStore.headObject(statement.s3Key);
+    } catch (error) {
+      if (
+        error instanceof ObjectNotFoundError ||
+        (error instanceof Error && error.name === "ObjectNotFoundError")
+      ) {
+        return errorResponse(
+          context,
+          404,
+          "UPLOAD_NOT_FOUND",
+          "アップロードされた画像が見つかりません。",
+        );
+      }
+
+      logStorageFailure("upload_complete_head_object_failed");
+      return errorResponse(
+        context,
+        503,
+        "DEPENDENCY_UNAVAILABLE",
+        "依存サービスを利用できません。",
+      );
+    }
+
+    if (
+      objectMetadata.contentType !== statement.contentType ||
+      objectMetadata.contentLength !== statement.contentLength
+    ) {
+      return errorResponse(
+        context,
+        409,
+        "UPLOAD_METADATA_MISMATCH",
+        "アップロードされた画像の情報が登録内容と一致しません。",
+      );
+    }
+
+    let uploadedStatement: StatementRecord | null;
+
+    try {
+      uploadedStatement = await statements.markUploaded(statement.id);
+
+      if (!uploadedStatement) {
+        uploadedStatement = await statements.findById(statement.id);
+      }
+    } catch {
+      logDependencyFailure("upload_complete_mark_uploaded_failed");
+      return errorResponse(
+        context,
+        503,
+        "DEPENDENCY_UNAVAILABLE",
+        "依存サービスを利用できません。",
+      );
+    }
+
+    if (!uploadedStatement) {
+      return errorResponse(
+        context,
+        404,
+        "STATEMENT_NOT_FOUND",
+        "明細が見つかりません。",
+      );
+    }
+
+    if (uploadedStatement.status === "FAILED") {
+      return errorResponse(
+        context,
+        409,
+        "STATEMENT_NOT_UPLOADABLE",
+        "この明細はアップロード完了にできません。",
+      );
+    }
+
+    return context.json(toUploadStatus(uploadedStatement));
+  });
 
   app.get("/statements/:id", async (context) => {
     const parsedId = statementIdSchema.safeParse(context.req.param("id"));
