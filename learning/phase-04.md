@@ -73,7 +73,17 @@ CDKの`RemovalPolicy.RETAIN`は誤削除を防ぐ一方、Stackを削除して�
 - CDK Assertions
 - `cdk synth`
 
-AWS CLIの認証情報がこの環境にないため、実AWSへの`cdk deploy`と実バケットへのcurl PUTは未実施である。実施時は`docs/s3-upload.md`の手順を使い、テスト画像を確認後に削除する。
+- `DATABASE_URL=... npm test`: 55件成功
+- `npm run typecheck`: 成功
+- `npm run typecheck:infra`: 成功
+- `npm run build`: 成功
+- `npm run cdk:synth`: 成功
+- AWS CLIで認証済みアカウントを確認し、`StorageStack`を東京リージョンへデプロイ: 成功
+- 実際のPresigned URLへ11バイトのテストデータをPUT: HTTP 200
+- `upload/complete`でS3のContent-TypeとContent-Lengthを確認し、`UPLOADED`へ更新: 成功
+- `HeadObject`で保存結果を確認後、テスト用Objectは削除済み
+
+デプロイ時、初回bootstrapで作成されたCloudFormation実行Roleに、Bootstrap version確認用SSM参照権限がないことが分かった。アプリケーションRoleへ権限を追加するのではなく、S3リソースだけを管理するこのStackではCDKのbootstrap version ruleを無効にした。bootstrapのS3へテンプレートを発行し、CloudFormation実行RoleでStackを更新する仕組み自体は使用している。将来、Assetや複雑なCDK構成を追加する場合は、version ruleを無効にしたままにせず、bootstrapの互換性検査を有効にするか、権限を限定したbootstrap構成を再検討する。
 
 ## 理解確認と回答
 

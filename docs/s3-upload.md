@@ -45,6 +45,8 @@ npm run cdk:deploy:storage
 
 初回のAWSアカウントでは、CDK bootstrapが必要になる場合がある。bootstrapが作るリソースにも費用や権限があるため、対象アカウントとリージョンを確認して実行する。
 
+このPhaseの`StorageStack`はS3リソースだけを管理し、アプリケーションのAssetを持たない。そのため、CDK bootstrap versionを確認するためのSSM参照をテンプレートへ追加しない設定にしている。CDK bootstrap自体は必要であり、テンプレートの発行先S3とCloudFormation実行Roleはbootstrapで作成されたものを使用する。Assetを追加するPhaseでは、この設定を無条件に引き継がず、bootstrap互換性の検査と必要権限を改めて設計する。
+
 デプロイ後、Outputのバケット名を未commitの`.env`へ設定する。
 
 ```dotenv

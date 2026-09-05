@@ -96,3 +96,18 @@ test("StorageStackは不正な保持日数を拒否する", () => {
     /rawRetentionDays must be a positive integer/,
   );
 });
+
+test("StorageStackはbootstrap versionのSSM参照をテンプレートへ追加しない", () => {
+  const app = new cdk.App();
+  const stack = new StorageStack(app, "StorageStackWithoutBootstrapRule", {
+    env: { account: "123456789012", region: "ap-northeast-1" },
+    frontendOrigin: "http://localhost:5173",
+    rawRetentionDays: 7,
+  });
+  const template = Template.fromStack(stack).toJSON() as Record<string, unknown>;
+  const parameters = (template.Parameters ?? {}) as Record<string, unknown>;
+  const rules = (template.Rules ?? {}) as Record<string, unknown>;
+
+  assert.equal("BootstrapVersion" in parameters, false);
+  assert.equal("CheckBootstrapVersion" in rules, false);
+});

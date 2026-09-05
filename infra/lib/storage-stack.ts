@@ -17,7 +17,17 @@ export class StorageStack extends cdk.Stack {
   ) {
     const { frontendOrigin, rawRetentionDays, ...stackProps } = props;
 
-    super(scope, id, stackProps);
+    super(scope, id, {
+      ...stackProps,
+      // このStackはS3リソースだけを管理し、アプリケーションのAssetを持たない。
+      // 学習用アカウントでCDK bootstrapの実行RoleにSSM全体の参照権限を
+      // 追加しなくてもデプロイできるよう、bootstrap version ruleを使わない。
+      synthesizer:
+        stackProps.synthesizer ??
+        (new cdk.DefaultStackSynthesizer({
+          generateBootstrapVersionRule: false,
+        }) as unknown as cdk.IStackSynthesizer),
+    });
 
     if (!Number.isInteger(rawRetentionDays) || rawRetentionDays < 1) {
       throw new Error("rawRetentionDays must be a positive integer");
