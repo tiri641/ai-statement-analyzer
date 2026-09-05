@@ -89,7 +89,7 @@ APIがSIGINTまたはSIGTERMを受けると、新規HTTP受付を止め、pg Poo
 - `.env`は`.gitignore`に含め、commitしない。
 - `.env.example`にはローカル開発専用の値だけを記載した。
 - DB接続情報や内部エラーをHTTPレスポンスへ返さない。
-- APIは127.0.0.1へbindし、Phase 1では外部公開しない。
+- APIは127.0.0.1へbindし、Phase 1では外部公開しない。認証がないPhase 3でもloopback以外のHostでは起動を拒否する。ECSへ移行するPhaseでは、認証・認可と所有者チェックを追加したうえでHost設定を変更する。
 - AWS credentialsは使用していない。
 
 ## Cost

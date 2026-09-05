@@ -2,7 +2,7 @@
 
 ## 現在の状態
 
-Phase 0（設計）、Phase 1（ローカル開発環境）、Phase 2（Database）の実装・動作確認を完了した。Phase 3（API）の実装・動作確認を進めている。
+Phase 0（設計）、Phase 1（ローカル開発環境）、Phase 2（Database）、Phase 3（API）の実装・動作確認を完了した。
 
 ## 作業ルール
 
@@ -73,7 +73,7 @@ Phase 3のPlanは[plans/phase-03.md](plans/phase-03.md)に記録する。Phase 3
 
 Status: 実装・動作確認完了。Zod Validation、Migration 003、明細作成・状態取得API、APIエラー処理を追加し、Unit TestとIntegration Testに成功した。
 
-次のGate: Phase 3のAPI入力検証、DB登録、S3 Uploadとの通信分離、学習記録を確認する。
+次のGate: Phase 3のレビュー修正、API入力検証、DB登録、S3 Uploadとの通信分離、学習記録を確認する。
 
 ### Phase 4: S3
 

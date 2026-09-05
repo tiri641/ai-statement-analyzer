@@ -83,6 +83,7 @@ ApplicationのTask Roleと混同しない。ECS AgentがECRからimageをpullし
 - APIはJSON body、画像metadata、queryをサイズ・文字数・列挙値で制限する。
 - Content-Typeだけを信用せず、Workerが画像magic bytes / decoderで再確認する。
 - 本番公開時は認証・所有者チェックを必須とする。認証なしの単一ユーザーMVPはlocalhostまたは閉じた学習環境に限る。
+- Phase 3のAPIは認証が未実装のため、`HOST`が`127.0.0.1`、`::1`、`localhost`以外の場合は起動を拒否する。この制限は認証Middlewareと`owner_id`条件を実装した後に見直す。
 
 ## Secrets
 

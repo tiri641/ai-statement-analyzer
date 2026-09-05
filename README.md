@@ -4,7 +4,7 @@
 
 クレジットカード明細画像をS3へ直接アップロードし、SQS経由のECS WorkerがAmazon BedrockでOCR・merchant正規化・カテゴリ分類を行う学習用アプリケーションである。PostgreSQLを数値の正とし、SQL AnalyticsをBedrockが解釈してAI Insightsを作る。
 
-Phase 3までのローカルAPI、Database、明細登録・状態取得APIを実装済み。Phase 4へ進む前に、Phase 3の学習記録と動作結果を確認する。
+Phase 3までのローカルAPI、Database、明細登録・状態取得APIを実装済み。Phase 3の`POST /statements`は画像情報をDBへ登録するだけで、Responseの`upload`は`null`である。実際のS3 UploadとPresigned URLはPhase 4で追加する。
 
 ## Architecture
 
@@ -104,4 +104,4 @@ S3 Block Public Access、短期Presigned URL、HTTPS、Private RDS、Security Gr
 
 ## 設計レビュー
 
-Phase 1、Phase 2、Phase 3は完了した。Phase 4へ進む前に、Phase 3の実装・テスト・学習記録を確認する。Bedrock Model、Frontend、NAT / Endpoint、Insights API、Image共有、Worker scaling、S3 retention、認証の設計判断は後続Phaseで使用する。
+Phase 1、Phase 2、Phase 3は完了した。Phase 4へ進む前に、Phase 3の実装・テスト・学習記録を確認する。認証なしAPIはloopback host以外で起動できない。Bedrock Model、Frontend、NAT / Endpoint、Insights API、Image共有、Worker scaling、S3 retention、認証の設計判断は後続Phaseで使用する。

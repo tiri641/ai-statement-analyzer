@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { after, before, beforeEach, test } from "node:test";
 import os from "node:os";
 import path from "node:path";
@@ -134,6 +134,63 @@ databaseTest("Migration失敗時はMigration記録とDDLをRollbackする", asyn
     assert.equal(migration.rowCount, 0);
     assert.equal(table.rowCount, 0);
   } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+databaseTest("Migration 003は既存statementへ仮のMetadataを入れずに失敗する", async () => {
+  assert.ok(pool);
+
+  const schemaName = `phase3_migration_${process.pid}_${Date.now()}`;
+  const temporaryDirectory = await mkdtemp(
+    path.join(os.tmpdir(), "statement-analyzer-migration-"),
+  );
+  const client = await pool.connect();
+
+  try {
+    await client.query(`CREATE SCHEMA "${schemaName}"`);
+    await client.query(`SET search_path TO "${schemaName}"`);
+    const migrationClient = {
+      query: client.query.bind(client),
+      release: () => undefined,
+    } as unknown as import("pg").PoolClient;
+
+    await writeFile(
+      path.join(temporaryDirectory, "001_create_statements.sql"),
+      "CREATE TABLE statements (id integer PRIMARY KEY);",
+    );
+    await writeFile(
+      path.join(temporaryDirectory, "002_insert_existing_statement.sql"),
+      "INSERT INTO statements (id) VALUES (1);",
+    );
+    await writeFile(
+      path.join(temporaryDirectory, "003_add_upload_metadata.sql"),
+      await readFile(
+        path.join(migrationDirectory, "003_add_upload_metadata.sql"),
+        "utf8",
+      ),
+    );
+
+    await assert.rejects(
+      runMigrations(
+        { connect: async () => migrationClient },
+        temporaryDirectory,
+      ),
+    );
+
+    const result = await pool.query(
+      `
+        SELECT COUNT(*)::text AS count
+        FROM information_schema.tables
+        WHERE table_schema = $1
+      `,
+      [schemaName],
+    );
+    assert.equal(result.rows[0]?.count, "0");
+  } finally {
+    await client.query("SET search_path TO public");
+    client.release();
+    await pool.query(`DROP SCHEMA "${schemaName}" CASCADE`);
     await rm(temporaryDirectory, { recursive: true, force: true });
   }
 });

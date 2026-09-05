@@ -129,3 +129,11 @@ APIの単体テストではFake Repositoryを使用する。実際のPostgreSQL�
 - 画像本体をAPIへ送らない
 - Unit TestとIntegration Testが成功する
 - `learning/phase-03.md`へデータフロー、障害、Security、Cost、理解確認を記録する
+
+## レビュー後の追加条件
+
+- 認証未実装のAPIをloopback以外へ公開しない
+- DB内部のfailure messageを公開用Responseへそのまま返さない
+- 既存statementへ画像Metadataの仮値を設定しない
+- JSON Request Bodyの上限と画像サイズの上限を分けて検証する
+- Repository層からAPI層へ依存しない

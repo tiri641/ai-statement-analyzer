@@ -4,7 +4,9 @@
 
 APIはHTTPの受付、入力Validation、認可、DB参照・更新、SQS送信を担当する。画像本体のproxy、同期Bedrock OCR、LLMへの金額計算依頼は行わない。
 
-APIの成功レスポンスはFrontend向けの公開DTOに変換し、s3_key、processing token、Presigned URL、内部failure詳細を返さない。エラーは構造化したcodeを返す。
+Phase 3では認証・認可をまだ実装していないため、APIサーバーはloopback hostでのみ起動を許可する。公開環境での起動には、後続Phaseで認証Middlewareとowner_id条件を追加する。
+
+APIの成功レスポンスはFrontend向けの公開DTOに変換し、s3_key、processing token、内部failure詳細を返さない。Presigned URLはPhase 4で、指定したS3 Objectへの短時間のPUTに限って返す。エラーは構造化したcodeを返す。
 
 ## 共通
 
@@ -64,8 +66,11 @@ Frontend --PUT Presigned URL--> S3
 
 ### Errors
 
-- 400 INVALID_REQUEST: 月、Content-Type、サイズ不正
-- 413 FILE_TOO_LARGE: サイズ上限超過
+- 400 INVALID_REQUEST: JSON、Content-Type、月、画像形式などの入力不正
+- 413 REQUEST_TOO_LARGE: JSON Request Bodyが64KiBを超過
+- 413 FILE_TOO_LARGE: 画像サイズ上限超過
+- 409 STATEMENT_CONFLICT: DBの一意制約などによる競合
+- 404 STATEMENT_NOT_FOUND: 指定したstatementが存在しない
 - 503 DEPENDENCY_UNAVAILABLE: DBまたはS3 signing依存障害
 
 ## PUT Presigned URL

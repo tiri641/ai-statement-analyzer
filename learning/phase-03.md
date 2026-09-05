@@ -138,7 +138,7 @@ Zod、APIエラー、Migration 003、Repository拡張、HonoのRouteを追加し
 ## 重要コード
 
 - `src/api/schemas.ts`: targetMonth、Content-Type、Content-Lengthを検証する。
-- `src/api/errors.ts`: RepositoryとAPIで扱う競合エラーを定義する。
+- `src/database/errors.ts`: Database層の一意制約違反を表すErrorを定義する。
 - `src/app.ts`: API Route、Validation、Response DTO、エラー変換を定義する。
 - `src/database/statement-repository.ts`: Upload metadataを含むstatementをDBへ保存・取得する。
 - `migrations/003_add_upload_metadata.sql`: S3 Upload前提のmetadataとDB制約を追加する。
@@ -185,7 +185,7 @@ Repositoryのエラーを内部へ記録し、Frontendには503 `DEPENDENCY_UNAV
 
 ### DBの一意制約で競合した場合
 
-Repositoryが競合を`StatementConflictError`へ変換し、APIは409 `STATEMENT_CONFLICT`を返す。
+Repositoryが競合を`UniqueConstraintError`へ変換し、APIは409 `STATEMENT_CONFLICT`を返す。
 
 ### S3 Uploadに失敗した場合
 
@@ -252,3 +252,19 @@ DBにはS3 keyや内部状態などAPI利用者へ見せる必要のない情報
 ## Phase 3で扱わなかったもの
 
 実際のS3 Bucket、Presigned URL発行、FrontendのFile送信、S3 `HeadObject`、SQS、Bedrock、認証、解析開始APIはPhase 4以降で扱う。
+
+## レビュー後の修正
+
+Phase 3のPRを別エージェントでレビューし、次の指摘を確認した。
+
+| 指摘 | 対応 |
+|---|---|
+| 認証なしでネットワーク公開できる | 認証導入まではloopback host以外でAPIを起動できないようにした。公開前に認証・owner_id条件を実装する方針も明記した |
+| DBの内部failure messageがResponseへ漏れる | 許可したfailure codeだけ固定メッセージへ変換し、未知のcodeは一般メッセージへ置き換えた |
+| Migration 003が既存行へ仮のMetadataを入れる | 既存statementがある場合はMigrationを明示的に失敗させ、仮値を保存しないようにした |
+| JSON Request Bodyのサイズ制限がない | `POST /statements`へ64KiBのbody limitを追加した |
+| HTTP Content-Typeを検証していない | `application/json`以外を400で拒否するテストと実装を追加した |
+| RepositoryがAPI層のErrorへ依存する | `UniqueConstraintError`をDatabase層へ移し、APIが409へ変換するようにした |
+| Phase 3とPhase 4の説明が混在する | API一覧、README、学習記録へ実装Phaseを明記した |
+
+認証機能そのものはPhase 3の範囲に追加していない。これは学習計画上のDecision Requiredとして残し、認証なしAPIを公開しない実行時制限を先に追加したためである。

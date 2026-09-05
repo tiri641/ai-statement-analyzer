@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createApp } from "../src/app.ts";
-import { StatementConflictError } from "../src/api/errors.ts";
+import { UniqueConstraintError } from "../src/database/errors.ts";
 import type {
   CreateStatementInput,
   StatementRecord,
@@ -172,6 +172,47 @@ test("POST /statementsは不正なJSONに400を返す", async () => {
   assert.equal(response.status, 400);
 });
 
+test("POST /statementsはJSON以外のContent-Typeに400を返す", async () => {
+  const app = createTestApp();
+
+  const response = await app.request("/statements", {
+    method: "POST",
+    headers: { "Content-Type": "text/plain" },
+    body: JSON.stringify({
+      targetMonth: "2026-08",
+      fileName: "statement.jpg",
+      contentType: "image/jpeg",
+      contentLength: 1024,
+    }),
+  });
+
+  assert.equal(response.status, 400);
+});
+
+test("POST /statementsは大きすぎるJSON bodyに413を返す", async () => {
+  const app = createTestApp();
+
+  const response = await app.request("/statements", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      targetMonth: "2026-08",
+      fileName: "statement.jpg",
+      contentType: "image/jpeg",
+      contentLength: 1024,
+      unexpected: "x".repeat(64 * 1024),
+    }),
+  });
+
+  assert.equal(response.status, 413);
+  assert.deepEqual(await response.json(), {
+    error: {
+      code: "REQUEST_TOO_LARGE",
+      message: "リクエストが大きすぎます。",
+    },
+  });
+});
+
 test("GET /statements/{id}は公開用DTOを返す", async () => {
   const app = createTestApp({
     findById: async () => createStatementRecord(),
@@ -216,7 +257,7 @@ test("GET /statements/{id}は不正なUUIDに400を返す", async () => {
 test("statement作成の競合に409を返す", async () => {
   const app = createTestApp({
     create: async () => {
-      throw new StatementConflictError();
+      throw new UniqueConstraintError();
     },
   });
 
@@ -275,7 +316,7 @@ test("FAILEDのstatementは安全なfailure情報だけを返す", async () => {
       createStatementRecord({
         status: "FAILED",
         failureCode: "UNSUPPORTED_IMAGE",
-        failureMessage: "画像を解析できませんでした。",
+        failureMessage: "password=should-not-leak",
       }),
   });
 
@@ -289,7 +330,27 @@ test("FAILEDのstatementは安全なfailure情報だけを返す", async () => {
     processedAt: null,
     failure: {
       code: "UNSUPPORTED_IMAGE",
-      message: "画像を解析できませんでした。",
+      message: "対応していない画像形式です。",
     },
+  });
+});
+
+test("未知のfailure codeと内部failure messageを公開しない", async () => {
+  const app = createTestApp({
+    findById: async () =>
+      createStatementRecord({
+        failureCode: "password=should-not-leak",
+        failureMessage: "Presigned URL should-not-leak",
+      }),
+  });
+
+  const response = await app.request(`/statements/${statementId}`);
+  const body = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.includes("should-not-leak"), false);
+  assert.deepEqual(JSON.parse(body).failure, {
+    code: "PROCESSING_FAILED",
+    message: "明細を処理できませんでした。",
   });
 });

@@ -10,4 +10,4 @@ Securityの正本は [../SECURITY_DESIGN.md](../SECURITY_DESIGN.md)。
 - FrontendにAWS credentialsを置かない。
 - ログへ画像、カード番号、Presigned URL、raw AI responseを出さない。
 - 認証なしのLocal MVPを公開しない。
-
+- Phase 3では認証が未実装のため、APIはloopback host以外で起動しない。公開前に認証Middlewareとowner_idによる所有者チェックを追加する。

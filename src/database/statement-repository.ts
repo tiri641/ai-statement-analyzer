@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
-import { StatementConflictError } from "../api/errors.js";
+import { UniqueConstraintError } from "./errors.js";
 
 export const STATEMENT_STATUSES = [
   "UPLOAD_PENDING",
@@ -209,7 +209,7 @@ export class StatementRepository {
       return mapStatement(getFirstRow(result, "statementの作成結果がありません"));
     } catch (error) {
       if (isUniqueViolation(error)) {
-        throw new StatementConflictError();
+        throw new UniqueConstraintError();
       }
 
       throw error;

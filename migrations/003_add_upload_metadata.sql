@@ -1,10 +1,15 @@
-ALTER TABLE statements
-  ADD COLUMN content_type text NOT NULL DEFAULT 'image/jpeg',
-  ADD COLUMN content_length bigint NOT NULL DEFAULT 1;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM statements) THEN
+    RAISE EXCEPTION
+      '003_add_upload_metadata requires statements to be empty because upload metadata cannot be inferred';
+  END IF;
+END
+$$;
 
 ALTER TABLE statements
-  ALTER COLUMN content_type DROP DEFAULT,
-  ALTER COLUMN content_length DROP DEFAULT;
+  ADD COLUMN content_type text NOT NULL,
+  ADD COLUMN content_length bigint NOT NULL;
 
 ALTER TABLE statements
   ADD CONSTRAINT statements_content_type_check
