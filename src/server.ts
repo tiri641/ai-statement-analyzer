@@ -2,6 +2,7 @@ import "dotenv/config";
 import { serve } from "@hono/node-server";
 import { Pool } from "pg";
 import { createApp } from "./app.js";
+import { StatementRepository } from "./database/statement-repository.js";
 
 const port = Number(process.env.PORT ?? "3000");
 const host = process.env.HOST ?? "127.0.0.1";
@@ -22,7 +23,10 @@ const pool = new Pool({
   connectionTimeoutMillis: 2_000,
   query_timeout: 2_000,
 });
-const app = createApp(pool);
+const app = createApp({
+  database: pool,
+  statements: new StatementRepository(pool),
+});
 const server = serve(
   {
     fetch: app.fetch,

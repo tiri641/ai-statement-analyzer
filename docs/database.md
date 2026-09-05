@@ -11,7 +11,7 @@
 
 初期Indexは対象月・日付・merchant・categoryと一意制約の必要最小限にする。認証導入時はowner_idを全queryへ追加する。
 
-## Phase 2の実装
+## Phase 2・3の実装
 
 Phase 2では、番号付きSQLを`pg`で読み込むMigration実行器と、`statements` / `transactions`を追加した。Migrationの適用履歴は`schema_migrations`に保存し、1回のMigration実行をDB Transactionで囲んでいる。
 
@@ -19,8 +19,8 @@ Phase 2では、番号付きSQLを`pg`で読み込むMigration実行器と、`st
 npm run migrate
 ```
 
-`statements`には明細の対象月、S3 key、OCR処理状態を保存する。`transactions`にはOCRで抽出した取引を保存する。status、`line_number`、`amount`の不正値はDBのCHECK制約で拒否し、`statement_id`のForeign Keyと`UNIQUE(statement_id, line_number)`で参照整合性と行重複を防ぐ。
+`statements`には明細の対象月、S3 key、OCR処理状態、Content-Type、Content-Lengthを保存する。`transactions`にはOCRで抽出した取引を保存する。status、Content-Type、Content-Length、`line_number`、`amount`の不正値はDBのCHECK制約で拒否し、`statement_id`のForeign Keyと`UNIQUE(statement_id, line_number)`で参照整合性と行重複を防ぐ。
 
 `StatementRepository`の`saveTransactionsAndComplete`は、取引INSERTとstatementの`COMPLETED`更新を同じTransactionで実行する。途中でエラーになった場合は全体をRollbackし、一部の取引だけが残らない。
 
-Phase 2の詳細な実装判断と学習記録は [learning/phase-02.md](../learning/phase-02.md) を参照する。
+Phase 2・3の詳細な実装判断と学習記録は [learning/phase-02.md](../learning/phase-02.md) と [learning/phase-03.md](../learning/phase-03.md) を参照する。

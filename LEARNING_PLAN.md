@@ -63,7 +63,8 @@
 
 ## Phase 3: API
 
-- 作るもの: statement作成、status取得、入力Validation、Presigned URLの契約（URL生成は次Phaseでもよい）。
+- 実装・動作確認・学習記録まで完了。Phase 3ではS3へ接続していない。
+- 作ったもの: statement作成、status取得、入力Validation、Presigned URLを受け取るための暫定Response契約。
 - 必要性: FrontendとBackendの責務境界を固定する。
 - 内部処理: HTTP -> Zod -> DB -> DTO。
 - 選択肢: REST、GraphQL。推奨はREST。

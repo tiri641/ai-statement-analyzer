@@ -64,7 +64,7 @@ databaseTest("Migrationを再実行してもエラーにならない", async () 
     `,
   );
 
-  assert.equal(result.rows[0]?.count, "2");
+  assert.equal(result.rows[0]?.count, "3");
 });
 
 databaseTest("月別・日付・merchant・category用のIndexが作成される", async () => {
@@ -145,16 +145,22 @@ databaseTest("statementsへ有効な状態の明細を登録して取得でき�
     id: statementId,
     s3Key: "statements/statement-1.jpg",
     targetMonth: "2026-08",
+    contentType: "image/jpeg",
+    contentLength: 1024,
     status: "UPLOAD_PENDING",
   });
 
   assert.equal(created.id, statementId);
   assert.equal(created.targetMonth, "2026-08-01");
   assert.equal(created.status, "UPLOAD_PENDING");
+  assert.equal(created.contentType, "image/jpeg");
+  assert.equal(created.contentLength, 1024);
 
   const found = await repository.findById(statementId);
 
   assert.equal(found?.s3Key, "statements/statement-1.jpg");
+  assert.equal(found?.contentType, "image/jpeg");
+  assert.equal(found?.contentLength, 1024);
 });
 
 databaseTest("statementsの状態を更新できる", async () => {
@@ -164,6 +170,8 @@ databaseTest("statementsの状態を更新できる", async () => {
     id: statementId,
     s3Key: "statements/statement-1.jpg",
     targetMonth: "2026-08",
+    contentType: "image/jpeg",
+    contentLength: 1024,
     status: "UPLOAD_PENDING",
   });
 
@@ -180,6 +188,8 @@ databaseTest("同じs3_keyは重複登録できない", async () => {
     id: statementId,
     s3Key: "statements/duplicate.jpg",
     targetMonth: "2026-08",
+    contentType: "image/jpeg",
+    contentLength: 1024,
     status: "UPLOAD_PENDING",
   });
 
@@ -188,6 +198,8 @@ databaseTest("同じs3_keyは重複登録できない", async () => {
       id: secondStatementId,
       s3Key: "statements/duplicate.jpg",
       targetMonth: "2026-08",
+      contentType: "image/jpeg",
+      contentLength: 1024,
       status: "UPLOAD_PENDING",
     }),
   );
@@ -199,10 +211,77 @@ databaseTest("statementsは許可されていないstatusを拒否する", async
   await assert.rejects(
     pool.query(
       `
-        INSERT INTO statements (id, s3_key, target_month, status)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO statements (
+          id,
+          s3_key,
+          target_month,
+          status,
+          content_type,
+          content_length
+        ) VALUES ($1, $2, $3, $4, $5, $6)
       `,
-      [statementId, "statements/invalid-status.jpg", "2026-08-01", "INVALID"],
+      [
+        statementId,
+        "statements/invalid-status.jpg",
+        "2026-08-01",
+        "INVALID",
+        "image/jpeg",
+        1024,
+      ],
+    ),
+  );
+});
+
+databaseTest("statementsは許可されていないContent-Typeを拒否する", async () => {
+  assert.ok(pool);
+
+  await assert.rejects(
+    pool.query(
+      `
+        INSERT INTO statements (
+          id,
+          s3_key,
+          target_month,
+          status,
+          content_type,
+          content_length
+        ) VALUES ($1, $2, $3, $4, $5, $6)
+      `,
+      [
+        statementId,
+        "statements/invalid-content-type.jpg",
+        "2026-08-01",
+        "UPLOAD_PENDING",
+        "image/gif",
+        1024,
+      ],
+    ),
+  );
+});
+
+databaseTest("statementsは上限を超えるContent-Lengthを拒否する", async () => {
+  assert.ok(pool);
+
+  await assert.rejects(
+    pool.query(
+      `
+        INSERT INTO statements (
+          id,
+          s3_key,
+          target_month,
+          status,
+          content_type,
+          content_length
+        ) VALUES ($1, $2, $3, $4, $5, $6)
+      `,
+      [
+        statementId,
+        "statements/too-large.jpg",
+        "2026-08-01",
+        "UPLOAD_PENDING",
+        "image/jpeg",
+        10 * 1024 * 1024 + 1,
+      ],
     ),
   );
 });
@@ -245,6 +324,8 @@ databaseTest("同じstatement_idとline_numberの取引を重複登録できな�
     id: statementId,
     s3Key: "statements/statement-1.jpg",
     targetMonth: "2026-08",
+    contentType: "image/jpeg",
+    contentLength: 1024,
     status: "UPLOAD_PENDING",
   });
 
@@ -302,6 +383,8 @@ databaseTest("transactionsはline_numberが0以下の場合に拒否する", asy
     id: statementId,
     s3Key: "statements/statement-1.jpg",
     targetMonth: "2026-08",
+    contentType: "image/jpeg",
+    contentLength: 1024,
     status: "COMPLETED",
   });
 
@@ -331,6 +414,8 @@ databaseTest("transactionsはamountが0の場合に拒否する", async () => {
     id: statementId,
     s3Key: "statements/statement-1.jpg",
     targetMonth: "2026-08",
+    contentType: "image/jpeg",
+    contentLength: 1024,
     status: "COMPLETED",
   });
 
@@ -359,6 +444,8 @@ databaseTest("取引保存と明細の完了更新を同じTransactionで確定�
     id: statementId,
     s3Key: "statements/statement-1.jpg",
     targetMonth: "2026-08",
+    contentType: "image/jpeg",
+    contentLength: 1024,
     status: "PROCESSING",
   });
 
@@ -390,6 +477,8 @@ databaseTest("取引保存に失敗した場合は取引と完了更新をRollba
     id: statementId,
     s3Key: "statements/statement-1.jpg",
     targetMonth: "2026-08",
+    contentType: "image/jpeg",
+    contentLength: 1024,
     status: "PROCESSING",
   });
 
@@ -434,6 +523,8 @@ databaseTest("明細を削除すると関連する取引も削除される", asy
     id: statementId,
     s3Key: "statements/statement-1.jpg",
     targetMonth: "2026-08",
+    contentType: "image/jpeg",
+    contentLength: 1024,
     status: "COMPLETED",
   });
   await pool.query(

@@ -20,6 +20,8 @@ statements 1 --- N transactions
 | owner_id | uuid nullable | 認証導入時の所有者。認証を採用する場合はNOT NULLへ移行 |
 | s3_key | text | NOT NULL、UNIQUE。S3 bucket名はDBに持たずkeyだけ保存 |
 | target_month | date | NOT NULL。月初日に正規化して月単位検索に使う |
+| content_type | text | NOT NULL。MVPではimage/jpegまたはimage/png |
+| content_length | bigint | NOT NULL。1〜10MiB。S3 HeadObjectとの照合に使う |
 | status | text | 許可された状態のみ |
 | processing_started_at | timestamptz | claim開始時刻 |
 | processing_lease_expires_at | timestamptz | stale PROCESSINGの再claim判定 |

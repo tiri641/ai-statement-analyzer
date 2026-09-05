@@ -49,6 +49,19 @@ APIの成功レスポンスはFrontend向けの公開DTOに変換し、s3_key、
 
 実際のURLは短期Bearer tokenなのでログへ出さない。署名対象のContent-TypeとFrontendのPUT時Content-Typeを一致させる。
 
+Phase 3ではS3未接続のため、`upload`は`null`を返す。Phase 4でAPIがPresigned URLを返し、FrontendがそのURLへ画像本体をHTTP PUTする。
+
+```text
+Phase 3:
+Frontend --POST /statements--> API
+           画像情報だけ          ↓
+                              PostgreSQL
+
+Phase 4:
+Frontend --PUT Presigned URL--> S3
+           画像本体
+```
+
 ### Errors
 
 - 400 INVALID_REQUEST: 月、Content-Type、サイズ不正
@@ -58,6 +71,8 @@ APIの成功レスポンスはFrontend向けの公開DTOに変換し、s3_key、
 ## PUT Presigned URL
 
 これはAPI Endpointではなく、FrontendがS3へ直接送る。成功後、FrontendはS3の200を確認して次のEndpointを呼ぶ。PUT失敗時に解析開始を呼ばない。
+
+Phase 3ではこのPUTはまだ実行しない。Phase 4で、APIが`statements.s3_key`を使ってPresigned URLを発行し、FrontendがURLの`body`へ選択した画像の`File`を設定してPUTする。
 
 ## POST /statements/{id}/analyze
 
