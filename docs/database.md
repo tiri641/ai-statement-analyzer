@@ -23,6 +23,12 @@ npm run migrate
 
 Migration 003は、既存statementの画像からContent-Typeとサイズを安全に復元できないため、既存statementがあるDBでは仮値を入れずに失敗する。実データがある環境では、適用前にバックアップを取得し、再アップロードまたは別途データ移行方針を決める。
 
-`StatementRepository`の`saveTransactionsAndComplete`は、取引INSERTとstatementの`COMPLETED`更新を同じTransactionで実行する。途中でエラーになった場合は全体をRollbackし、一部の取引だけが残らない。
+`StatementRepository`の`claimForProcessing`は、`QUEUED`またはlease期限切れの`PROCESSING`だけを条件付きUPDATEでclaimする。Workerが先に状態を読み取ってから更新するのではなく、DBの1文を処理権取得の境界にする。
+
+`saveTransactionsAndComplete`はprocessing tokenとleaseを受け取り、取引INSERTとstatementの`COMPLETED`更新を同じTransactionで実行する。Transaction開始時と完了UPDATE時にtoken・leaseを再確認し、古いWorkerの保存をRollbackする。
+
+`transactions`の`UNIQUE(statement_id, line_number)`に対して`ON CONFLICT DO UPDATE`を使うため、同じstatementを再処理しても取引行が二重にならない。完了時にはactive lease、token、failure情報をクリアする。
+
+既定のDB leaseは10分である。SQS Main QueueのVisibility Timeoutは300秒のままとし、Phase 8ではHeartbeatを実装しない。Visibility Timeoutを超える処理時間を本番で許可する前に、Heartbeatとlease期間の組み合わせを後続Phaseで決定する。
 
 Phase 2・3の詳細な実装判断と学習記録は [learning/phase-02.md](../learning/phase-02.md) と [learning/phase-03.md](../learning/phase-03.md) を参照する。

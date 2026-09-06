@@ -22,6 +22,8 @@ function createStatementRecord(
     contentType: "image/jpeg",
     contentLength: 1024,
     processingStartedAt: null,
+    processingLeaseExpiresAt: null,
+    processingToken: null,
     processedAt: null,
     failureCode: null,
     failureMessage: null,
@@ -68,6 +70,11 @@ function createTestApp(options: {
   const objectStore: StatementObjectStore = {
     createPresignedPutUrl: async () => "https://s3.example.test/upload",
     headObject: async () => ({
+      contentType: "image/jpeg",
+      contentLength: 1024,
+    }),
+    getObject: async () => ({
+      bytes: new Uint8Array(1024),
       contentType: "image/jpeg",
       contentLength: 1024,
     }),

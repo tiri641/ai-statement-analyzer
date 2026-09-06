@@ -3,6 +3,10 @@ export interface ObjectMetadata {
   contentLength: number;
 }
 
+export interface DownloadedObject extends ObjectMetadata {
+  bytes: Uint8Array;
+}
+
 export interface StatementObjectStore {
   createPresignedPutUrl(input: {
     key: string;
@@ -10,6 +14,10 @@ export interface StatementObjectStore {
     expiresInSeconds: number;
   }): Promise<string>;
   headObject(key: string): Promise<ObjectMetadata>;
+  getObject(
+    key: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<DownloadedObject>;
 }
 
 export class ObjectNotFoundError extends Error {

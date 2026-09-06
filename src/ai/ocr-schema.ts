@@ -1,6 +1,7 @@
 import { z } from "zod";
+import { MAX_STATEMENT_IMAGE_BYTES } from "../config/limits.js";
 
-export const MAX_OCR_IMAGE_BYTES = 10 * 1024 * 1024;
+export const MAX_OCR_IMAGE_BYTES = MAX_STATEMENT_IMAGE_BYTES;
 export const MAX_OCR_TRANSACTIONS = 100;
 
 export const OCR_CATEGORIES = [

@@ -26,6 +26,11 @@ function createTestApp(database: HealthDatabase) {
         contentType: "image/jpeg",
         contentLength: 1024,
       }),
+      getObject: async () => ({
+        bytes: new Uint8Array(1024),
+        contentType: "image/jpeg",
+        contentLength: 1024,
+      }),
     },
     jobQueue: {
       sendAnalyzeJob: async () => undefined,

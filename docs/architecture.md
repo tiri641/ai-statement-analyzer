@@ -20,9 +20,9 @@ flowchart LR
   W -.-> CW
 ```
 
-### Phase 5 / Phase 6 / Phase 7の実装範囲
+### Phase 5 / Phase 6 / Phase 7 / Phase 8の実装範囲
 
-Phase 5で実際に動くのは、APIからMain Queueへの送信と、1回だけ動く最小ConsumerによるReceive / Validation / Deleteである。Phase 6では、ローカルで常駐Workerを起動し、SQS Long Polling、1件ずつの処理、成功後ACK、SIGTERMによるGraceful Shutdownを実装した。Phase 7では、Workerとは独立したBedrock Converseアダプター、強制Tool選択、Tool input schema、Zod Validation、合成PNGスモークを追加した。実AWSスモークで選択モデルがstrictフィールドをサポートしないことも確認した。S3 GetObject、WorkerへのBedrock組み込み、DB Transaction、ECS Serviceへのデプロイは後続Phaseで実装する。
+Phase 5で実際に動くのは、APIからMain Queueへの送信と、1回だけ動く最小ConsumerによるReceive / Validation / Deleteである。Phase 6では、ローカルで常駐Workerを起動し、SQS Long Polling、1件ずつの処理、成功後ACK、SIGTERMによるGraceful Shutdownを実装した。Phase 7では、Workerとは独立したBedrock Converseアダプター、強制Tool選択、Tool input schema、Zod Validation、合成PNGスモークを追加した。Phase 8では、S3 GetObject、DBのAtomic claim、lease、processing tokenによるfencing、OCR結果のTransaction保存、COMMIT後のDeleteMessageを追加した。ECS Serviceへのデプロイ、Heartbeat、Retry/DLQ運用は後続Phaseで実装する。
 
 ```mermaid
 sequenceDiagram

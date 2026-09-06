@@ -14,7 +14,7 @@ Message bodyは小さくし、`statementId`だけを入れる。
 {"statementId":"019abc00-0000-7000-8000-000000000001"}
 ```
 
-画像本体、カード番号、Presigned URLは入れない。Workerは`statementId`を使って、後続PhaseでDBからS3 keyなど必要な情報を取得する。Messageは`src/queue/analyze-job.ts`のstrictなZod schemaでUUIDと余分なフィールドを検証する。
+画像本体、カード番号、Presigned URLは入れない。Workerは`statementId`を使って、Phase 8でDBからS3 key、Metadata、processing tokenなど必要な情報を取得する。Messageは`src/queue/analyze-job.ts`のstrictなZod schemaでUUIDと余分なフィールドを検証する。
 
 ## Queue設定
 

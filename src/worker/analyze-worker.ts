@@ -18,10 +18,12 @@ export interface AnalyzeJobHandlerOptions {
   signal: AbortSignal;
 }
 
+export type AnalyzeJobDisposition = "ACK" | "RETRY";
+
 export type AnalyzeJobHandler = (
   job: ReceivedAnalyzeJob,
   options?: AnalyzeJobHandlerOptions,
-) => Promise<void>;
+) => Promise<void | AnalyzeJobDisposition>;
 
 export interface AnalyzeWorkerOptions {
   queue: AnalyzeJobQueue;
@@ -229,7 +231,7 @@ export class AnalyzeWorker {
       receiveCount: job.receiveCount,
     });
 
-    let handlerResult: ShutdownOperationResult<void>;
+    let handlerResult: ShutdownOperationResult<void | AnalyzeJobDisposition>;
     try {
       handlerResult = await this.runWithShutdownTimeout(
         Promise.resolve().then(() =>
@@ -262,6 +264,17 @@ export class AnalyzeWorker {
         statementId: job.statementId,
         receiveCount: job.receiveCount,
         errorCode: "SHUTDOWN_TIMEOUT",
+        durationMs: Date.now() - startedAt,
+      });
+      return;
+    }
+
+    if (handlerResult.value === "RETRY") {
+      this.logger.info({
+        event: "worker_job_deferred",
+        messageId: job.messageId,
+        statementId: job.statementId,
+        receiveCount: job.receiveCount,
         durationMs: Date.now() - startedAt,
       });
       return;

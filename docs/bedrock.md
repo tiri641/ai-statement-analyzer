@@ -16,7 +16,7 @@ BedrockOcrAnalyzer
 OcrResult
 ```
 
-このPhaseでは、S3 `GetObject`、SQS Consumer、`statements`の状態更新、transactionsへの保存は行わない。Phase 8でWorkerからアダプターを呼び出し、DB Transactionと冪等性を接続する。
+Phase 8ではWorkerからこのアダプターを呼び出し、S3 `GetObject`、DB Transaction、冪等なtransactions保存、`COMPLETED`更新、COMMIT後のSQS DeleteMessageへ接続する。失敗時のretryable/permanent分類と`FAILED`遷移はPhase 9で扱う。
 
 ## 採用モデルと確認事項
 
