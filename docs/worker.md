@@ -2,79 +2,164 @@
 
 ## SQSとの違い
 
-SQSはMessageを保持・配送するAWSサービスであり、WorkerはSQSからMessageを受け取って処理するアプリケーションである。SQS自体が画像を解析したり、DBを更新したりするわけではない。
+SQSはMessageを保持・配送するAWSサービスであり、WorkerはSQSからMessageを受け取って処理するアプリケーションである。SQS自体が画像を取得したり、OCRしたり、DBを更新したりするわけではない。
 
-## Phase 6の範囲
+## Workerの処理範囲
 
-Phase 6では、APIとは別に常駐するWorkerプロセスをローカルで実装した。`npm run worker`で起動し、SQSをLong Pollingして最大1件ずつ受信する。
+Phase 8のWorkerは、`statementId`だけを持つMessageを受信し、次の処理を行う。
 
-Phase 6の処理関数は、受信したMessageの`messageId`、`statementId`、`receiveCount`を安全に記録するだけである。Phase 7ではWorkerから独立したBedrock OCRアダプターを追加したが、S3取得・Bedrock呼び出し・PostgreSQL保存をこの処理関数へ接続するのは後続Phaseで実装する。
-
-## 基本ループ
-
-1. Shutdown中でなければ`ReceiveMessage`を呼び出す。
-2. 最大1件のMessageを受信する。
-3. Messageがなければ次のLong Pollingを開始する。
-4. Messageがあれば、注入された処理関数を実行する。
-5. 処理関数が成功した場合だけ`DeleteMessage`を呼び出す。
-6. 次のMessageを受信する。
-
-同時処理数は1件である。受信したMessageの処理と削除が完了するまで、次のMessageを受信しない。
-
-## ACKの境界
+1. DBで`QUEUED`または期限切れ`PROCESSING`をAtomic claimする
+2. DBから得たS3 keyとMetadataを使って画像を取得する
+3. S3 MetadataとDB登録値、実際のbytes長を照合する
+4. Bedrock OCR Adapterへ画像bytesを渡す
+5. Zodで検証済みのOCR結果を取引入力へ変換する
+6. token付きDB Transactionで取引保存と`COMPLETED`更新を行う
+7. DB COMMIT成功後にMessageを削除する
 
 ```text
 ReceiveMessage
   ↓
-処理関数
-  ↓ 成功
+Atomic claim
+  ↓
+S3 GetObject + Metadata照合
+  ↓
+Bedrock OCR + Zod Validation
+  ↓
+DB Transaction
+  ↓ COMMIT
 DeleteMessage
 ```
 
-処理関数が失敗した場合はDeleteMessageを呼ばない。Deleteに失敗した場合もMessageは削除されたとみなさない。SQSのVisibility Timeoutが切れるとMessageが再配送されるため、後続Phaseの業務処理は重複実行に耐えられる必要がある。
+## Atomic claimとlease
 
-不正Messageも削除しない。既存のQueueアダプターがValidationエラーを返し、Workerはエラーを記録してLoopを継続する。再配送を繰り返したMessageは、Queueの`maxReceiveCount`に設定した回数まで受信されるとDLQへ移動する。
+Workerは`findById`してから別のUPDATEを実行せず、次の条件付きUPDATEを1回実行する。
 
-## エラー処理
+- `QUEUED`はclaimできる
+- `PROCESSING`は`processing_lease_expires_at < NOW()`の場合だけ再claimできる
+- `UPLOADED`、`COMPLETED`、`FAILED`はclaimしない
+- claimごとに新しい`processing_token`を発行する
+- leaseの既定値は10分で、Worker依存性から変更できる
 
-ReceiveMessageのエラーではWorkerを終了せず、次の間隔で再受信する。
+claimに成功すると、WorkerはS3 key、Content-Type、Content-Length、processing token、lease期限を受け取る。別Workerが有効なleaseを持つ場合、claimは失敗する。
+
+claim失敗後に現在状態を再読込し、statementが存在しない場合、または`COMPLETED` / `FAILED`なら追加処理なしでACKする。それ以外の未完了状態はACKせず、SQSの再配送に任せる。削除済みstatementは同じIDで復元されないため、再試行しても処理可能にならない。
+
+## S3取得
+
+`StatementObjectStore.getObject`は、S3 `GetObjectCommand`のBodyを`Uint8Array`へ変換する。10 MiBを上限とし、次をすべて確認する。
+
+- S3 Objectが存在する
+- S3 Content-TypeとDBのContent-Typeが一致する
+- S3 Content-LengthとDBのContent-Lengthが一致する
+- 実際のbytes長がContent-Lengthと一致する
+- bytesが空でない
+
+画像bytes、S3 key、Presigned URLはログへ出さない。WorkerのShutdown時には`AbortSignal`をS3 SDKへ渡す。
+
+## ACKの境界
+
+`AnalyzeJobHandler`は`ACK`、`RETRY`、例外を返せる。
+
+| handler結果 | DeleteMessage | 用途 |
+|---|---:|---|
+| `void` / `ACK` | 実行 | DB COMMIT成功、またはterminal stateのskip |
+| `RETRY` | 実行しない | 有効な別Worker、未完了状態 |
+| throw | 実行しない | S3、Bedrock、DB、Validationの失敗 |
+
+DeleteMessageはDB COMMITの後だけ実行する。DeleteMessageが失敗した場合も処理失敗として扱い、MessageはSQSから再配送される可能性がある。COMMIT済みの重複Messageは`COMPLETED`を確認して、S3・Bedrock・DB処理を再実行せずACKする。
+
+## Fencing
+
+取引保存Transactionの開始時と完了UPDATE時に、次の条件を再確認する。
+
+- statusが`PROCESSING`
+- processing tokenがWorkerのtokenと一致する
+- leaseがDB時刻で有効である
+
+leaseを失った古いWorkerがTransaction中に取引を残さないよう、条件に一致しない場合はTransaction全体をRollbackする。完了UPDATEの`RETURNING`が0行の場合もfencing失敗としてRollbackする。
+
+## Transactionと冪等性
+
+`transactions`は`UNIQUE(statement_id, line_number)`を持つ。保存時は同じlineが存在すれば`ON CONFLICT DO UPDATE`で最新のOCR結果へ更新する。
+
+取引INSERTとstatementの`COMPLETED`更新は同じDB Transactionで行う。一部の取引だけ保存された状態を作らない。
 
 ```text
-1秒 → 2秒 → 4秒 → 8秒 → 16秒 → 最大30秒
+BEGIN
+  ↓ tokenとleaseを確認
+  ↓ transactionsをINSERT ... ON CONFLICT DO UPDATE
+  ↓ statementをCOMPLETEDへ更新
+  ↓ lease/token/failure情報をクリア
+COMMIT
+  ↓
+DeleteMessage
 ```
 
-Receive成功または空応答でバックオフは1秒へ戻る。AWS SDKが行う通信Retryと、Messageを削除しないことで起こるSQS再配送は別の仕組みである。
+## 障害時の挙動
+
+| 状況 | Workerの動作 | Message |
+|---|---|---|
+| Queueが空 | Long Pollingを継続 | なし |
+| statementが存在しない | 追加処理なし | ACKして削除 |
+| 有効な別Workerが処理中 | ACKしない | 再配送に任せる |
+| `COMPLETED` / `FAILED` | 追加処理なしでACK | 削除する |
+| S3取得・Metadata照合失敗 | 例外、状態は`PROCESSING`のまま | ACKしない |
+| Bedrock・Validation失敗 | 例外、状態は`PROCESSING`のまま | ACKしない |
+| DB保存・fencing失敗 | Rollback、ACKしない | 再配送に任せる |
+| DeleteMessage失敗 | ログ、Workerは継続 | 再配送の可能性あり |
+
+Phase 8では失敗理由をretryable/permanentに分類せず、`FAILED`へ更新しない。lease期限後の再claimとMessage再配送をPhase 9の方針へ委ねる。
 
 ## Graceful Shutdown
 
 SIGTERM / SIGINTを受信すると、WorkerはShutdownを要求する。
 
-1. Shutdown状態にする。
-2. 新しいReceiveMessageを開始しない。
-3. Long Polling中のReceiveMessageをAbortControllerで中断する。
-4. すでに受信済みのMessageがあれば処理する。
-5. 処理成功後にDeleteMessageする。
-6. Workerを終了する。
+1. Shutdown状態にする
+2. 新しいReceiveMessageを開始しない
+3. Long Polling中のReceiveMessageをAbortする
+4. 受信済みMessageの処理を待つ
+5. DB COMMIT済みの場合だけDeleteMessageする
+6. Workerを終了する
 
-処理関数の実行中にSIGTERMを受信した場合は、通常は処理とDeleteMessageの完了を待つ。ただし、Shutdown要求後に30秒経過しても処理またはDeleteMessageが完了しない場合は、削除せずにWorkerを終了する。MessageはSQSで再配送される。処理関数にはAbortSignalを渡しており、後続PhaseではこのSignalをS3・Bedrock・DB処理の停止に利用する。実際のECS Task Definitionで`stopTimeout=30秒`を指定するのはPhase 13で行う。
+Shutdown要求後30秒を超えて処理またはDeleteMessageが完了しない場合は、削除せずに終了する。処理中のS3・BedrockにはAbortSignalを渡す。ECS Task Definitionの`stopTimeout=30秒`はPhase 13で設定する。
 
-## 後続PhaseのWorker処理
+## Phase 5の確認用Consumerとの違い
 
-最終的なWorkerは次の処理を行う。
+`npm run consume:analyze`の`consumeOneAnalyzeJob`は、QueueのReceive・Validation・Deleteを確認するためのPhase 5用ユーティリティである。Phase 8のOCR処理では使用せず、本番処理経路は`npm run worker`の常駐Workerだけとする。
 
-1. `statementId`をValidationする。
-2. DBで`QUEUED -> PROCESSING`のAtomic claimを取得する。
-3. S3から画像を取得する。
-4. BedrockでOCRする。
-5. ZodでAI出力をValidationする。
-6. DB Transactionで取引保存と`COMPLETED`更新を行う。
-7. DB COMMIT後にDeleteMessageする。
+## 設定
 
-処理時間がVisibility Timeoutを超える場合は、`ChangeMessageVisibility`によるHeartbeatを追加する。Workerが停止しても永久に`PROCESSING`へ残らないよう、DB leaseの期限と再claimも後続Phaseで実装する。
+Workerは次の環境変数を使用する。
+
+```dotenv
+DATABASE_URL=postgresql://...
+S3_BUCKET_NAME=<S3 bucket>
+SQS_QUEUE_URL=<SQS queue>
+AWS_REGION=ap-northeast-1
+BEDROCK_OCR_MODEL_ID=jp.amazon.nova-2-lite-v1:0
+PROCESSING_LEASE_SECONDS=600
+```
+
+`DATABASE_URL`、`S3_BUCKET_NAME`、`SQS_QUEUE_URL`がない場合や、lease秒数が正の整数でない場合はWorkerを起動しない。Credentialsは環境のAWS SDK認証機構または後続PhaseのTask Roleから取得する。
+
+## テスト
+
+Fake依存性と実PostgreSQLで次を確認する。
+
+- Atomic claim、lease期限切れ、A/B race
+- token不一致時のfencingとRollback
+- OCR結果保存と`COMPLETED`更新のTransaction境界
+- S3 Bodyのbounded変換、Metadata照合、AbortSignal
+- `COMPLETED`の重複Messageのskip
+- 有効な`PROCESSING`の重複Messageの未ACK
+- S3・Bedrock・DB失敗時の未ACK
+- COMMIT後だけのDeleteMessage
+- 機密情報を含まない構造化ログ
 
 ## 公式仕様への参照
 
-- [Amazon SQS Long Polling](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/best-practices-setting-up-long-polling.html)
+- [Amazon SQS at-least-once delivery](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/standard-queues-at-least-once-delivery.html)
 - [Amazon SQS Visibility Timeout](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-visibility-timeout.html)
-- [Amazon ECS Task Lifecycle](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-lifecycle-explanation.html)
-- [ECS ContainerDefinition stopTimeout](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_ContainerDefinition.html)
+- [Amazon S3 GetObject API](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html)
+- [Amazon Bedrock Converse API](https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference.html)
+- [PostgreSQL Transactions](https://www.postgresql.org/docs/current/tutorial-transactions.html)

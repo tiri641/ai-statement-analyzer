@@ -1,6 +1,7 @@
 import { z } from "zod";
+import { MAX_STATEMENT_IMAGE_BYTES } from "../config/limits.js";
 
-export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+export const MAX_UPLOAD_BYTES = MAX_STATEMENT_IMAGE_BYTES;
 export const MAX_REQUEST_BODY_BYTES = 64 * 1024;
 
 const targetMonthSchema = z

@@ -4,7 +4,7 @@
 
 クレジットカード明細画像をS3へ直接アップロードし、SQS経由のECS WorkerがAmazon BedrockでOCR・merchant正規化・カテゴリ分類を行う学習用アプリケーションである。PostgreSQLを数値の正とし、SQL AnalyticsをBedrockが解釈してAI Insightsを作る。
 
-Phase 7までのローカルAPI、Database、S3 Upload、Presigned URL、SQS解析ジョブ投入、常駐Worker、Bedrock OCRアダプターを実装済み。`POST /statements`は短期Presigned PUT URLを返し、Frontendまたはcurlが画像をS3へ直接送る。`POST /statements/{id}/upload/complete`がS3の実体を確認して、`UPLOAD_PENDING`を`UPLOADED`へ更新する。その後`POST /statements/{id}/analyze`が`statementId`だけをSQSへ送り、`QUEUED`を返す。Phase 6のWorkerはSQSをLong Pollingし、検証済みMessageを1件ずつ処理して成功後に削除する。Phase 7では画像bytesをBedrock Converseへ渡してTool Useを受け取り、Zodで検証する。S3 GetObject、BedrockをWorkerへ組み込む処理、DB保存、ECSデプロイは後続Phaseで実装する。
+Phase 8までのローカルAPI、Database、S3 Upload、Presigned URL、SQS解析ジョブ投入、常駐Worker、Bedrock OCR接続を実装済み。`POST /statements`は短期Presigned PUT URLを返し、Frontendまたはcurlが画像をS3へ直接送る。`POST /statements/{id}/upload/complete`がS3の実体を確認して、`UPLOAD_PENDING`を`UPLOADED`へ更新する。その後`POST /statements/{id}/analyze`が`statementId`だけをSQSへ送り、`QUEUED`を返す。WorkerはSQSをLong Pollingし、DBでAtomic claimを取得してS3画像をBedrockでOCRし、取引保存と`COMPLETED`更新を同一Transactionで行う。DB COMMIT後だけMessageを削除し、重複Messageは冪等に処理する。ECSデプロイ、Retry/DLQ運用は後続Phaseで実装する。
 
 ## Architecture
 
@@ -58,7 +58,7 @@ APIはホストのNode.jsで起動し、PostgreSQLだけをDocker Composeで起�
 
 Phase 4・5のAPI起動とCDK操作には、ローカルのAWS CLI ProfileまたはSSO認証が必要である。AWS認証情報をFrontend、ソースコード、`.env`へAccess Keyとして保存しない。認証情報がない場合でも、`npm test`、`npm run typecheck`、`npm run build`、`npm run cdk:synth`は実行できる。
 
-Phase 2でMigrationと業務テーブル、Phase 3でAPI入力検証と明細API、Phase 4でS3/CDKとPresigned URL、Phase 5でSQS/CDKと解析開始API、Phase 6で常駐WorkerとGraceful Shutdown、Phase 7でBedrock RuntimeのConverseアダプター、Tool Use、Zod Validation、合成PNG、実接続スモークを追加した。Bedrock呼び出しはまだWorkerへ接続していない。ECS ServiceとVPCはまだ追加していない。
+Phase 2でMigrationと業務テーブル、Phase 3でAPI入力検証と明細API、Phase 4でS3/CDKとPresigned URL、Phase 5でSQS/CDKと解析開始API、Phase 6で常駐WorkerとGraceful Shutdown、Phase 7でBedrock RuntimeのConverseアダプター、Tool Use、Zod Validation、合成PNG、実接続スモーク、Phase 8でS3 GetObject、Atomic claim、lease、fencing、OCR結果保存、COMMIT後ACKを追加した。ECS ServiceとVPC、Heartbeat、Retry/DLQ運用はまだ追加していない。
 
 ## Environment Variables
 
@@ -77,6 +77,7 @@ Phase 2でMigrationと業務テーブル、Phase 3でAPI入力検証と明細API
 - INSIGHTS_PROMPT_VERSION
 - S3_PRESIGNED_URL_EXPIRES_SECONDS
 - S3_RAW_RETENTION_DAYS
+- PROCESSING_LEASE_SECONDS
 
 ## Migration / API / Worker
 
@@ -93,7 +94,7 @@ APIの契約は [API_DESIGN.md](API_DESIGN.md)、WorkerとSQSの説明は [docs/
 
 ## AWS Deploy
 
-Phase 4ではS3をCDKでdeployし、Phase 5ではSQSとDLQをdeployする。`npm run cdk:synth`で確認し、`npm run cdk:deploy:storage`と`npm run cdk:deploy:messaging`で個別にdeployできる。StorageStackのOutput `S3BucketName`とMessagingStackのOutput `AnalyzeQueueUrl`を未commitの`.env`へ設定する。Phase 7のBedrockは、対象モデルへのアクセス許可と`bedrock:InvokeModel`権限が必要である。Phase 13では既存のS3、SQS、DLQを再作成せず、VPC、ALB、ECS、RDS、IAM、CloudWatchを追加する。
+Phase 4ではS3をCDKでdeployし、Phase 5ではSQSとDLQをdeployする。`npm run cdk:synth`で確認し、`npm run cdk:deploy:storage`と`npm run cdk:deploy:messaging`で個別にdeployできる。StorageStackのOutput `S3BucketName`とMessagingStackのOutput `AnalyzeQueueUrl`を未commitの`.env`へ設定する。Phase 7・8のBedrock Workerは、対象モデルへのアクセス許可、S3 `GetObject`、SQS Receive/Delete、DB接続が必要である。Phase 13では既存のS3、SQS、DLQを再作成せず、VPC、ALB、ECS、RDS、IAM、CloudWatchを追加する。
 
 `npm run consume:analyze`は`SQS_QUEUE_URL`のMessageを最大1件受信し、MessageのValidationに成功した場合だけ`DeleteMessage`する。空なら`EMPTY`を出力する。常駐Workerの`npm run worker`は処理関数の成功後だけ削除し、処理失敗・不正Message・Delete失敗時は削除せず継続する。SIGTERM / SIGINTを受信すると新規受信を止め、通常は処理中Messageの完了を待つ。Shutdown要求後30秒を超えて処理または削除が完了しない場合は削除せず終了し、SQSの再配送に任せる。
 
@@ -111,4 +112,4 @@ S3 Block Public Access、短期Presigned URL、HTTPS、Private RDS、Security Gr
 
 ## 設計レビュー
 
-Phase 1からPhase 7まで完了した。認証なしAPIはloopback host以外で起動できない。Phase 4のS3画像はLifecycleで7日後に削除され、Stack削除時は`RETAIN`でバケットを残す。Phase 5のSQSとDLQはSSE-SQS、SSL強制、redrive設定を持つ。AWSへ接続しない単体テストではFake S3、Fake SQS、Fake Bedrock clientを使用する。Phase 7の既定Bedrockモデルは`jp.amazon.nova-2-lite-v1:0`で、画像入力と強制Tool選択、Tool input schemaを使い、JSON Schema Structured Outputとstrict非対応をZodで補う。Frontend、NAT / Endpoint、Insights API、Image共有、Worker scaling、認証の設計判断は後続Phaseで使用する。
+Phase 1からPhase 8まで完了した。認証なしAPIはloopback host以外で起動できない。Phase 4のS3画像はLifecycleで7日後に削除され、Stack削除時は`RETAIN`でバケットを残す。Phase 5のSQSとDLQはSSE-SQS、SSL強制、redrive設定を持つ。AWSへ接続しない単体テストではFake S3、Fake SQS、Fake Bedrock clientを使用する。Phase 7の既定Bedrockモデルは`jp.amazon.nova-2-lite-v1:0`で、画像入力と強制Tool選択、Tool input schemaを使い、JSON Schema Structured Outputとstrict非対応をZodで補う。Phase 8ではAtomic claim、lease、processing token、S3 GetObject、OCR保存Transaction、COMMIT後ACKを実装した。Heartbeat、ECS、Retry/DLQ運用、Frontend、NAT / Endpoint、Insights API、Image共有、Worker scaling、認証の設計判断は後続Phaseで使用する。

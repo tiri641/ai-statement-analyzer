@@ -121,6 +121,19 @@ S3確認やDB更新に失敗した場合、DB statusは`UPLOAD_PENDING`のまま
 
 画像は7日後にLifecycleで削除される。`RemovalPolicy.RETAIN`はStack削除時の誤削除を防ぐ設定であり、バケット料金を自動で止める設定ではない。学習終了時は、不要な画像がないことを確認してからバケットを手動削除する。
 
+## WorkerのGetObject
+
+Phase 8では、APIの`HeadObject`確認とは別に、Workerが`GetObject`で画像Bodyを取得する。WorkerはDBのS3 keyを使用し、Messageへ画像本体やPresigned URLを含めない。
+
+取得したObjectは、次の値を照合してからBedrockへ渡す。
+
+- DBのContent-TypeとS3のContent-Type
+- DBのContent-LengthとS3のContent-Length
+- S3のContent-Lengthと実際のbytes長
+- 10 MiB以下か、空bytesでないか
+
+Bodyは最大10 MiBまでのboundedな`Uint8Array`へ変換する。S3取得時の`AbortSignal`はWorkerのGraceful Shutdownから伝播する。画像bytes、S3 key、Presigned URLはログへ出さない。
+
 ## 参照
 
 - [S3 Presigned URL](https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html)

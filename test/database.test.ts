@@ -276,6 +276,74 @@ databaseTest("UPLOADEDのstatementだけをQUEUEDへ更新できる", async () =
   assert.equal(secondUpdate, null);
 });
 
+databaseTest("QUEUEDのstatementをAtomicにclaimできる", async () => {
+  assert.ok(repository);
+
+  await repository.create({
+    id: statementId,
+    s3Key: "statements/statement-1.jpg",
+    targetMonth: "2026-08",
+    contentType: "image/jpeg",
+    contentLength: 1024,
+    status: "QUEUED",
+  });
+
+  const [firstClaim, secondClaim] = await Promise.all([
+    repository.claimForProcessing(statementId, "00000000-0000-4000-8000-000000000011"),
+    repository.claimForProcessing(statementId, "00000000-0000-4000-8000-000000000012"),
+  ]);
+
+  assert.equal(
+    [firstClaim, secondClaim].filter((claim) => claim !== null).length,
+    1,
+  );
+  assert.equal(
+    (firstClaim ?? secondClaim)?.processingToken,
+    firstClaim ? "00000000-0000-4000-8000-000000000011" : "00000000-0000-4000-8000-000000000012",
+  );
+});
+
+databaseTest("有効なleaseはclaimできず期限切れなら再claimできる", async () => {
+  assert.ok(pool);
+  assert.ok(repository);
+
+  await repository.create({
+    id: statementId,
+    s3Key: "statements/statement-1.jpg",
+    targetMonth: "2026-08",
+    contentType: "image/jpeg",
+    contentLength: 1024,
+    status: "QUEUED",
+  });
+
+  const firstClaim = await repository.claimForProcessing(
+    statementId,
+    "00000000-0000-4000-8000-000000000011",
+  );
+  assert.ok(firstClaim);
+
+  const activeClaim = await repository.claimForProcessing(
+    statementId,
+    "00000000-0000-4000-8000-000000000012",
+  );
+  assert.equal(activeClaim, null);
+
+  await pool.query(
+    `
+      UPDATE statements
+      SET processing_lease_expires_at = NOW() - INTERVAL '1 second'
+      WHERE id = $1
+    `,
+    [statementId],
+  );
+
+  const staleClaim = await repository.claimForProcessing(
+    statementId,
+    "00000000-0000-4000-8000-000000000012",
+  );
+  assert.equal(staleClaim?.processingToken, "00000000-0000-4000-8000-000000000012");
+});
+
 databaseTest("QUEUEDのstatementをUPLOADEDへ戻せる", async () => {
   assert.ok(repository);
 
@@ -560,10 +628,14 @@ databaseTest("取引保存と明細の完了更新を同じTransactionで確定�
     targetMonth: "2026-08",
     contentType: "image/jpeg",
     contentLength: 1024,
-    status: "PROCESSING",
+    status: "QUEUED",
   });
 
-  await repository.saveTransactionsAndComplete(statementId, [
+  const processingToken = "00000000-0000-4000-8000-000000000011";
+  const claim = await repository.claimForProcessing(statementId, processingToken);
+  assert.ok(claim);
+
+  await repository.saveTransactionsAndComplete(statementId, processingToken, [
     {
       lineNumber: 1,
       transactionDate: "2026-08-20",
@@ -579,6 +651,8 @@ databaseTest("取引保存と明細の完了更新を同じTransactionで確定�
   const transactions = await repository.findTransactions(statementId);
 
   assert.equal(statement?.status, "COMPLETED");
+  assert.equal(statement?.processingToken, null);
+  assert.equal(statement?.processingLeaseExpiresAt, null);
   assert.equal(transactions.length, 1);
   assert.equal(transactions[0]?.amount, 3980);
 });
@@ -593,11 +667,15 @@ databaseTest("取引保存に失敗した場合は取引と完了更新をRollba
     targetMonth: "2026-08",
     contentType: "image/jpeg",
     contentLength: 1024,
-    status: "PROCESSING",
+    status: "QUEUED",
   });
 
+  const processingToken = "00000000-0000-4000-8000-000000000011";
+  const claim = await repository.claimForProcessing(statementId, processingToken);
+  assert.ok(claim);
+
   await assert.rejects(
-    repository.saveTransactionsAndComplete(statementId, [
+    repository.saveTransactionsAndComplete(statementId, processingToken, [
       {
         lineNumber: 1,
         transactionDate: "2026-08-20",
@@ -608,11 +686,11 @@ databaseTest("取引保存に失敗した場合は取引と完了更新をRollba
         subcategory: "EC",
       },
       {
-        lineNumber: 1,
+        lineNumber: 2,
         transactionDate: "2026-08-21",
         merchantRaw: "duplicate",
         merchantName: "duplicate",
-        amount: 100,
+        amount: 0,
         category: "その他",
         subcategory: null,
       },
@@ -627,6 +705,113 @@ databaseTest("取引保存に失敗した場合は取引と完了更新をRollba
 
   assert.equal(statement?.status, "PROCESSING");
   assert.equal(transactionCount.rows[0]?.count, "0");
+});
+
+databaseTest("古いprocessing tokenは取引保存を完了できない", async () => {
+  assert.ok(pool);
+  assert.ok(repository);
+
+  await repository.create({
+    id: statementId,
+    s3Key: "statements/statement-1.jpg",
+    targetMonth: "2026-08",
+    contentType: "image/jpeg",
+    contentLength: 1024,
+    status: "QUEUED",
+  });
+
+  const oldToken = "00000000-0000-4000-8000-000000000011";
+  const newToken = "00000000-0000-4000-8000-000000000012";
+  assert.ok(await repository.claimForProcessing(statementId, oldToken));
+  await pool.query(
+    `
+      UPDATE statements
+      SET processing_lease_expires_at = NOW() - INTERVAL '1 second'
+      WHERE id = $1
+    `,
+    [statementId],
+  );
+  assert.ok(await repository.claimForProcessing(statementId, newToken));
+
+  await assert.rejects(
+    repository.saveTransactionsAndComplete(statementId, oldToken, [
+      {
+        lineNumber: 1,
+        transactionDate: "2026-08-20",
+        merchantRaw: "old",
+        merchantName: "old",
+        amount: 100,
+        category: "その他",
+        subcategory: null,
+      },
+    ]),
+    /processing claim was lost/,
+  );
+
+  const transactionCount = await pool.query<{ count: string }>(
+    "SELECT COUNT(*)::text AS count FROM transactions WHERE statement_id = $1",
+    [statementId],
+  );
+  assert.equal(transactionCount.rows[0]?.count, "0");
+});
+
+databaseTest("同じline numberを再保存しても取引は重複しない", async () => {
+  assert.ok(pool);
+  assert.ok(repository);
+
+  await repository.create({
+    id: statementId,
+    s3Key: "statements/statement-1.jpg",
+    targetMonth: "2026-08",
+    contentType: "image/jpeg",
+    contentLength: 1024,
+    status: "QUEUED",
+  });
+  const firstToken = "00000000-0000-4000-8000-000000000011";
+  assert.ok(await repository.claimForProcessing(statementId, firstToken));
+  await pool.query(
+    `
+      INSERT INTO transactions (
+        statement_id,
+        line_number,
+        transaction_date,
+        merchant_raw,
+        merchant_name,
+        amount,
+        category,
+        subcategory
+      ) VALUES ($1, 1, $2, $3, $4, $5, $6, $7)
+    `,
+    [
+      statementId,
+      "2026-08-20",
+      "old",
+      "old",
+      100,
+      "その他",
+      null,
+    ],
+  );
+
+  await repository.saveTransactionsAndComplete(statementId, firstToken, [
+    {
+      lineNumber: 1,
+      transactionDate: "2026-08-21",
+      merchantRaw: "new",
+      merchantName: "new",
+      amount: 200,
+      category: "その他",
+      subcategory: null,
+    },
+  ]);
+
+  const transactionCount = await pool.query<{ count: string }>(
+    "SELECT COUNT(*)::text AS count FROM transactions WHERE statement_id = $1",
+    [statementId],
+  );
+  assert.equal(transactionCount.rows[0]?.count, "1");
+  const transactions = await repository.findTransactions(statementId);
+  assert.equal(transactions[0]?.merchantName, "new");
 });
 
 databaseTest("明細を削除すると関連する取引も削除される", async () => {

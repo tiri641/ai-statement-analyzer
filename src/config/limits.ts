@@ -1,0 +1,1 @@
+export const MAX_STATEMENT_IMAGE_BYTES = 10 * 1024 * 1024;

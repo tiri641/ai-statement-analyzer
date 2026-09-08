@@ -4,3 +4,10 @@ export class UniqueConstraintError extends Error {
     this.name = "UniqueConstraintError";
   }
 }
+
+export class ProcessingClaimLostError extends Error {
+  public constructor() {
+    super("processing claim was lost");
+    this.name = "ProcessingClaimLostError";
+  }
+}

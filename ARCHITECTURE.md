@@ -42,11 +42,11 @@ flowchart LR
 | PostgreSQL | 状態、構造化取引、制約、正確な集計 | LLMの解釈 |
 | Bedrock | OCR、merchant正規化、分類、Analyticsの解釈 | 金額の確定計算、DB整合性保証 |
 
-### Phase 7の現行実装
+### Phase 8の現行実装
 
 Phase 6では、ECSへデプロイする前のWorkerプロセスをローカルで実装した。WorkerはSQSをLong Pollingし、Messageを1件ずつ注入された処理関数へ渡す。処理関数が成功した場合だけDeleteMessageし、処理失敗やDelete失敗ではMessageを削除しない。SIGTERM / SIGINTでは新しい受信を停止し、Long PollingをAbortして処理中Jobの完了を待つ。Shutdown要求後30秒経過しても完了しない場合は削除せず終了し、SQSの再配送に任せる。
 
-Workerの処理関数はまだ安全なログ記録だけである。Phase 7ではWorkerから独立した`BedrockOcrAnalyzer`を追加し、画像bytesをConverse APIへ渡し、Tool Use応答をZodで検証できるようにした。S3取得、WorkerへのBedrock組み込み、DB Transaction、冪等な状態更新はPhase 8以降の責務である。ECS Fargateの`stopTimeout=30秒`はPhase 13でTask Definitionへ設定する。
+Phase 7ではWorkerから独立した`BedrockOcrAnalyzer`を追加し、画像bytesをConverse APIへ渡し、Tool Use応答をZodで検証できるようにした。Phase 8ではS3 `GetObject`、DBのAtomic claim、lease、processing tokenによるfencing、OCR結果のTransaction保存、`COMPLETED`更新、COMMIT後のDeleteMessageを接続した。ECS Fargateの`stopTimeout=30秒`はPhase 13でTask Definitionへ設定する。
 
 ## Upload Sequence
 

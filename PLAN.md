@@ -138,6 +138,14 @@ Status: 実装・単体テスト・実AWSスモーク確認完了。`ConverseCom
 4. COMMIT後DeleteMessageを固定する。
 5. duplicate / crash / A-B raceをテストする。
 
+Phase 8のPlanは[plans/phase-08.md](plans/phase-08.md)に記録した。
+
+Status: 実装・動作確認完了。S3 `GetObject`、boundedな画像bytes変換、`QUEUED -> PROCESSING`のAtomic claim、10分lease、processing tokenによるfencing、Bedrock OCR接続、取引保存と`COMPLETED`更新の同一Transaction、`ON CONFLICT DO UPDATE`、COMMIT後のDeleteMessage、`ACK` / `RETRY` dispositionを追加した。孤立MessageのACKとWeb Stream Bodyの上限付き変換も確認し、FakeテストとPostgreSQL integration testを含む118件に成功した。Heartbeat、FAILED遷移、Retry/DLQ運用、ECS設定はPhase 9以降で扱う。
+
+学習記録は[plans/phase-08.md](plans/phase-08.md)と[learning/phase-08.md](learning/phase-08.md)に記録する。
+
+次のGate: Atomic claim、lease、processing tokenによるfencing、DB COMMITとSQS DeleteMessageの順序、SQS重複配送、HeartbeatをPhase 8で実装しない理由を説明できること。
+
 ### Phase 9: Retry / DLQ
 
 1. retryable / permanent errorの分類を追加する。
