@@ -39,6 +39,6 @@ Phase 9では、修復不能な入力・OCRエラーを`FAILED`へ確定する�
 
 更新成功時は`failure_code`、安全な`failure_message`を保存し、processing tokenとleaseをNULLにする。条件に一致しない場合は0行更新として返し、古いWorkerが新しいWorkerの状態を上書きしない。failure codeはMigration 004のCHECK制約でallowlistに限定する。
 
-既定のDB leaseは10分である。SQS Main QueueのVisibility Timeoutは300秒のままとし、Phase 8ではHeartbeatを実装しない。Visibility Timeoutを超える処理時間を本番で許可する前に、Heartbeatとlease期間の組み合わせを後続Phaseで決定する。
+既定のDB leaseは10分である。SQS Main QueueのVisibility Timeoutは900秒とし、lease期限切れ前の重複受信を避ける。長時間処理で900秒を超える可能性が出る場合は、Heartbeatとlease更新の組み合わせを追加設計する。
 
 Phase 2・3の詳細な実装判断と学習記録は [learning/phase-02.md](../learning/phase-02.md) と [learning/phase-03.md](../learning/phase-03.md) を参照する。

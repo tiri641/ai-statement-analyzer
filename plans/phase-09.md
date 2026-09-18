@@ -10,6 +10,7 @@
 - `PROCESSING`、processing token、leaseを条件にした`FAILED`更新
 - Permanent failure保存後だけ`DeleteMessage`
 - Main Queueの`maxReceiveCount: 3`と既存DLQの維持
+- DB lease 10分より長いMain Queue Visibility Timeout（900秒）
 - DLQの`ApproximateNumberOfMessagesVisible`を監視するCloudWatch Alarm
 - AlarmからSNS Topicへの通知
 - SNS TopicをAmazon Q Developer in chat applicationsへ関連付けるSlack運用手順

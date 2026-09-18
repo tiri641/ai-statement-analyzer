@@ -83,7 +83,9 @@ async function readObjectBody(body: unknown): Promise<Uint8Array> {
   if (isAsyncIterable(body)) {
     for await (const chunk of body) {
       if (!(chunk instanceof Uint8Array)) {
-        throw new Error("S3 object Body contains an unsupported chunk");
+        throw new InvalidSourceObjectError(
+          "S3 object Body contains an unsupported chunk",
+        );
       }
 
       totalLength += chunk.byteLength;

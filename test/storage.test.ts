@@ -193,6 +193,28 @@ test("S3ObjectStoreはGetObjectのBody長不一致を拒否する", async () => 
   );
 });
 
+test("S3ObjectStoreは不正なBody chunkを恒久的な入力不正として拒否する", async () => {
+  const client = {
+    send: async () => ({
+      Body: (async function* () {
+        yield "not-a-byte-array";
+      })(),
+      ContentType: "image/jpeg",
+      ContentLength: 1,
+    }),
+  } as unknown as S3Client;
+  const store = new S3ObjectStore({
+    bucketName: "statement-bucket",
+    region: "ap-northeast-1",
+    client,
+  });
+
+  await assert.rejects(
+    store.getObject("statements/statement-id/source"),
+    (error: unknown) => error instanceof InvalidSourceObjectError,
+  );
+});
+
 test("S3ObjectStoreはGetObjectの404をObjectNotFoundErrorへ変換する", async () => {
   const client = {
     send: async () => {

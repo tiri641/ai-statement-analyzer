@@ -74,6 +74,15 @@ test("BedrockのThrottlingは再試行可能として分類する", () => {
   });
 });
 
+test("Worker shutdownによるAbortErrorは再試行可能として分類する", () => {
+  const error = new Error("aborted");
+  error.name = "AbortError";
+
+  assert.deepEqual(classify("ocr", error), {
+    disposition: "RETRYABLE",
+  });
+});
+
 test("Bedrockの非再試行エラーは恒久エラーとして分類する", () => {
   const error = new Error("access denied");
   error.name = "AccessDeniedException";

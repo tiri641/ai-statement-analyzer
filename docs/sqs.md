@@ -24,7 +24,7 @@ Message bodyは小さくし、`statementId`だけを入れる。
 |---|---:|---:|
 | 種類 | Standard | Standard |
 | Message保持期間 | 4日 | 14日 |
-| Visibility Timeout | 300秒 | 既定値 |
+| Visibility Timeout | 900秒 | 既定値 |
 | ReceiveのLong Poll | 20秒 | - |
 | 暗号化 | SSE-SQS | SSE-SQS |
 | SSL強制 | 有効 | 有効 |
@@ -60,7 +60,7 @@ Phase 5のConsumerがMessageを削除しないと、Visibility Timeout後に再�
 
 Phase 9では、Retryable errorの場合はMessageを削除せず、Visibility Timeout後の再配送に任せる。Permanent errorの場合はWorkerがDBのstatementを`FAILED`へ更新し、そのDB更新が成功した後にMessageを削除する。`FAILED`更新に失敗した場合はMessageを削除しない。
 
-Main Queueの`maxReceiveCount`は3のままとし、Retryable errorが解消しないMessageはDLQへ移動する。DLQの`ApproximateNumberOfMessagesVisible`が1以上になるとCloudWatch AlarmがSNS Topicへ通知する。SNS TopicはAmazon Q Developer in chat applicationsへ関連付けてSlackへ通知できる。
+Main Queueの`maxReceiveCount`は3のままとし、Retryable errorが解消しないMessageはDLQへ移動する。Visibility TimeoutはDB leaseの10分より長い900秒に設定し、lease期限切れ前の重複受信でreceive countを消費しないようにする。DLQの`ApproximateNumberOfMessagesVisible`が1以上になるとCloudWatch AlarmがSNS Topicへ通知する。SNS TopicはAmazon Q Developer in chat applicationsへ関連付けてSlackへ通知できる。
 
 DLQからの無条件自動redriveは行わない。原因修正、対象Message、statementのlease期限を確認した後、運用者がControlled redriveを開始する。SQSの`StartMessageMoveTask`を使う例:
 

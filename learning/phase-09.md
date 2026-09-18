@@ -13,6 +13,7 @@
 - Permanent failure保存後だけACKするWorker処理
 - DLQの可視Message数を検知するCloudWatch Alarm
 - Alarm通知用SNS TopicとCloudWatch Alarm Action
+- Worker shutdownのAbortError再配送と、DB leaseより長い900秒のVisibility Timeout
 - Controlled redriveとSlack通知の運用ドキュメント
 
 ## データフロー
@@ -52,6 +53,8 @@ Bedrock OCR
 Redで分類器、Repository、Handler、API、CDKの失敗テストを追加し、Greenで最小実装を追加した。最後に既存のS3、Worker、API、Bedrock、SQSテストを含む全テストを実行した。
 
 実PostgreSQLではMigration 004、正しいtokenでのFAILED更新、token不一致、lease期限切れを確認した。
+
+PRレビューでは、Graceful ShutdownのAbortErrorを恒久エラーにしないこと、SQS Visibility TimeoutとDB leaseの関係、不正なS3 Body chunkの分類、AlarmからSNS Topicへの接続を追加確認した。HandlerのObjectNotFound、OCR応答不正、Bedrock非再試行、DB障害、FAILED更新障害のテストも追加した。
 
 ## 障害時の挙動
 

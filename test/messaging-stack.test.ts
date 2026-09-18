@@ -17,7 +17,7 @@ test("MessagingStackはStandard QueueとDLQを安全な設定で定義する", (
   template.hasResourceProperties("AWS::SQS::Queue", {
     MessageRetentionPeriod: 345600,
     ReceiveMessageWaitTimeSeconds: 20,
-    VisibilityTimeout: 300,
+    VisibilityTimeout: 900,
     SqsManagedSseEnabled: true,
     RedrivePolicy: Match.objectLike({ maxReceiveCount: 3 }),
   });
@@ -56,4 +56,9 @@ test("MessagingStackはStandard QueueとDLQを安全な設定で定義する", (
   const alarms = template.findResources("AWS::CloudWatch::Alarm");
   const alarm = Object.values(alarms)[0];
   assert.equal(alarm?.Properties?.AlarmActions?.length, 1);
+  assert.deepEqual(alarm?.Properties?.AlarmActions?.[0], {
+    Ref: Object.keys(template.findResources("AWS::SNS::Topic")).find((id) =>
+      id.includes("AnalyzeAlertsTopic"),
+    ),
+  });
 });

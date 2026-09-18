@@ -120,7 +120,7 @@ Zodでは次を確認する。
 
 AWS SDK v3のBedrock Runtime Clientには`maxAttempts=3`を設定した。Throttling、サービス一時障害、モデル一時エラー、timeout、接続リセットなどは`RETRYABLE`として分類する。Validation、AccessDenied、ResourceNotFound、Abortは`NON_RETRYABLE`である。
 
-ここでの分類は「WorkerがSQS MessageをACKするか」をまだ決めない。SDK内部のHTTPリトライと、SQSのVisibility Timeout後の再配送は別の層である。Messageを削除しない、FAILEDにする、DLQへ送る判断はPhase 9で実装する。
+ここでの分類は「WorkerがSQS MessageをACKするか」をまだ決めない。SDK内部のHTTPリトライと、SQSのVisibility Timeout後の再配送は別の層である。Messageを削除しない、FAILEDにする、DLQへ送る判断はPhase 9で実装する。WorkerのGraceful Shutdownで発生するAbortErrorは、OCRの恒久エラーではなく再配送対象として扱う。
 
 AbortSignalを受け取った場合はAWS SDKへ渡す。WorkerのGraceful Shutdownで新しい受信を止め、処理中のBedrock呼び出しをキャンセルするために使う。
 

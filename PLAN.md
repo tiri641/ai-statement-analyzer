@@ -155,7 +155,7 @@ Status: 実装・動作確認完了。S3 `GetObject`、boundedな画像bytes変�
 
 Phase 9のPlanは[plans/phase-09.md](plans/phase-09.md)に記録した。
 
-Status: 実装・動作確認完了。処理段階別のエラー分類、S3 object不正・対応外画像・不正OCR応答の`FAILED`遷移、tokenとleaseによる条件付き失敗更新、Retryable errorの未ACK、failure codeのDB allowlist、DLQ CloudWatch Alarm、SNS通知Topicを追加した。Main Queueの`maxReceiveCount: 3`とDLQは維持し、redriveは原因修正後のControlled redriveとした。Slack workspace/channelの関連付けはAWS管理側で行う。
+Status: 実装・動作確認完了。処理段階別のエラー分類、S3 object不正・対応外画像・不正OCR応答の`FAILED`遷移、tokenとleaseによる条件付き失敗更新、Retryable errorの未ACK、failure codeのDB allowlist、DLQ CloudWatch Alarm、SNS通知Topicを追加した。Worker shutdownの`AbortError`は再配送対象とし、Main QueueのVisibility TimeoutはDB lease 10分より長い900秒に設定した。`maxReceiveCount: 3`とDLQは維持し、redriveは原因修正後のControlled redriveとした。Slack workspace/channelの関連付けはAWS管理側で行う。
 
 Unit、Handler、API、CDKテストとPostgreSQL integration testを実行した。TDDのRed → Green → Refactorで実装した。
 

@@ -42,6 +42,10 @@ export function classifyAnalyzeJobError(
   stage: AnalyzeJobErrorStage,
   error: unknown,
 ): AnalyzeJobErrorClassification {
+  if (isAbortError(error)) {
+    return { disposition: "RETRYABLE" };
+  }
+
   if (stage === "object-store") {
     if (error instanceof ObjectNotFoundError) {
       return permanent(
@@ -85,4 +89,13 @@ export function classifyAnalyzeJobError(
   }
 
   return { disposition: "RETRYABLE" };
+}
+
+function isAbortError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+
+  const candidate = error as { name?: unknown; code?: unknown };
+  return candidate.name === "AbortError" || candidate.code === "ABORT_ERR";
 }

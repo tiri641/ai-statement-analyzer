@@ -39,7 +39,8 @@ export class MessagingStack extends cdk.Stack {
 
     this.analyzeQueue = new sqs.Queue(this, "AnalyzeQueue", {
       retentionPeriod: cdk.Duration.days(4),
-      visibilityTimeout: cdk.Duration.seconds(300),
+      // DB lease (10分)より長くし、lease期限切れ前の重複受信を防ぐ余裕を持たせる。
+      visibilityTimeout: cdk.Duration.seconds(900),
       receiveMessageWaitTime: cdk.Duration.seconds(20),
       encryption: sqs.QueueEncryption.SQS_MANAGED,
       enforceSSL: true,
