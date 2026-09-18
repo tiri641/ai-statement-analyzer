@@ -12,6 +12,17 @@ const targetMonthSchema = z
     return year >= 2000 && year <= 2100;
   }, "対象年は2000年から2100年までです");
 
+const analyticsYearSchema = z
+  .string()
+  .regex(/^\d{4}$/, "対象年はYYYY形式で指定してください")
+  .transform(Number)
+  .refine((value) => value >= 2000 && value <= 2100, "対象年が不正です");
+
+const analyticsMonthSchema = z
+  .string()
+  .regex(/^(0?[1-9]|1[0-2])$/, "対象月は1から12で指定してください")
+  .transform(Number);
+
 export const createStatementRequestSchema = z
   .object({
     targetMonth: targetMonthSchema,
@@ -30,6 +41,17 @@ export const createStatementRequestSchema = z
 
 export const statementIdSchema = z.string().uuid();
 
+export const monthlyAnalyticsQuerySchema = z
+  .object({
+    year: analyticsYearSchema,
+    month: analyticsMonthSchema,
+  })
+  .strict();
+
 export type CreateStatementRequest = z.infer<
   typeof createStatementRequestSchema
+>;
+
+export type MonthlyAnalyticsQuery = z.infer<
+  typeof monthlyAnalyticsQuerySchema
 >;

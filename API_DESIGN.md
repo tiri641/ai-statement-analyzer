@@ -189,7 +189,9 @@ DB状態更新とSQS SendMessageは同一Transactionではない。MVPでは以�
 
 ## GET /analytics/monthly?year=2026&month=8
 
-SUM、COUNT、GROUP BYはSQLで行い、割合と前月比はBackendで算出する。浮動小数点の表示は小数1桁へ丸めるが、合計金額自体は整数のままにする。
+Request Bodyは持たず、`year`と`month`だけをQuery Parameterで受け取る。画像、取引配列、合計金額などの集計入力をClientから受け取らない。Phase 8・9のWorkerがOCR結果を`transactions`へ保存し、このEndpointがPostgreSQLから集計する。
+
+対象は`statements.status = 'COMPLETED'`のstatementに属し、`transaction_date >= 月初 AND transaction_date < 翌月月初`を満たすtransactionsである。SUM、COUNT、GROUP BYはSQLで行い、割合と前月比はBackendで算出する。浮動小数点の表示は小数1桁へ丸めるが、合計金額自体は整数のままにする。返金は負数として純額へ含める。
 
 ```json
 {
@@ -227,6 +229,8 @@ SUM、COUNT、GROUP BYはSQLで行い、割合と前月比はBackendで算出す
 ```
 
 前月データがない場合、前月関連フィールドはnullまたはpreviousMonth: nullとする。0円除算は行わない。
+
+Phase 10の実装では、前月比を`(current - previous) / abs(previous) * 100`で計算する。前月に取引があるが合計金額が0円の場合、前月の総額・件数を返し、金額の前月比だけnullとする。現月の純額が0円の場合、カテゴリ・merchantのpercentageはnullとする。現月のカテゴリ・merchantに前月データがない場合、previousAmountとamountChangePercentageはnullとする。
 
 ## GET /analytics/monthly/insights?year=2026&month=8
 

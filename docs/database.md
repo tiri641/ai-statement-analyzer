@@ -41,4 +41,10 @@ Phase 9では、修復不能な入力・OCRエラーを`FAILED`へ確定する�
 
 既定のDB leaseは10分である。SQS Main QueueのVisibility Timeoutは900秒とし、lease期限切れ前の重複受信を避ける。長時間処理で900秒を超える可能性が出る場合は、Heartbeatとlease更新の組み合わせを追加設計する。
 
+## Phase 10の月次Analytics
+
+`StatementRepository.findMonthlyAnalytics`は、Clientから渡された集計値を使わず、`transactions`と`statements`をJOINしてSQLで集計する。`statements.status = 'COMPLETED'`を条件にし、`transaction_date`を`[月初, 翌月月初)`で絞り込む。
+
+現月と前月について、総額、件数、category、merchantのSUM / COUNT / GROUP BYを取得する。割合と前月比はBackendで計算し、返金の負数を含む純額を使用する。0円を分母にした割合・前月比はnullにする。Analytics APIのRequestは年月Queryだけで、取引データや画像を受け取らない。
+
 Phase 2・3の詳細な実装判断と学習記録は [learning/phase-02.md](../learning/phase-02.md) と [learning/phase-03.md](../learning/phase-03.md) を参照する。

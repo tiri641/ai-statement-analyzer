@@ -76,9 +76,11 @@ const pool = new Pool({
   connectionTimeoutMillis: 2_000,
   query_timeout: 2_000,
 });
+const statements = new StatementRepository(pool);
 const app = createApp({
   database: pool,
-  statements: new StatementRepository(pool),
+  statements,
+  analytics: statements,
   objectStore: new S3ObjectStore({
     bucketName: s3BucketName,
     region: awsRegion,

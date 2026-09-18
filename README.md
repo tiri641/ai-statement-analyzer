@@ -4,7 +4,7 @@
 
 クレジットカード明細画像をS3へ直接アップロードし、SQS経由のECS WorkerがAmazon BedrockでOCR・merchant正規化・カテゴリ分類を行う学習用アプリケーションである。PostgreSQLを数値の正とし、SQL AnalyticsをBedrockが解釈してAI Insightsを作る。
 
-Phase 9までのローカルAPI、Database、S3 Upload、Presigned URL、SQS解析ジョブ投入、常駐Worker、Bedrock OCR接続、Retry/DLQ運用を実装済み。`POST /statements`は短期Presigned PUT URLを返し、Frontendまたはcurlが画像をS3へ直接送る。`POST /statements/{id}/upload/complete`がS3の実体を確認して、`UPLOAD_PENDING`を`UPLOADED`へ更新する。その後`POST /statements/{id}/analyze`が`statementId`だけをSQSへ送り、`QUEUED`を返す。WorkerはSQSをLong Pollingし、DBでAtomic claimを取得してS3画像をBedrockでOCRし、取引保存と`COMPLETED`更新を同一Transactionで行う。Retryable errorはACKせず、Permanent errorはsafe failure codeを保存してからACKする。ECSデプロイ、Heartbeat、月次Analyticsは後続Phaseで実装する。
+Phase 10までのローカルAPI、Database、S3 Upload、Presigned URL、SQS解析ジョブ投入、常駐Worker、Bedrock OCR接続、Retry/DLQ運用、月次Analyticsを実装済み。`POST /statements`は短期Presigned PUT URLを返し、Frontendまたはcurlが画像をS3へ直接送る。`POST /statements/{id}/upload/complete`がS3の実体を確認して、`UPLOAD_PENDING`を`UPLOADED`へ更新する。その後`POST /statements/{id}/analyze`が`statementId`だけをSQSへ送り、`QUEUED`を返す。WorkerはSQSをLong Pollingし、DBでAtomic claimを取得してS3画像をBedrockでOCRし、取引保存と`COMPLETED`更新を同一Transactionで行う。Retryable errorはACKせず、Permanent errorはsafe failure codeを保存してからACKする。`GET /analytics/monthly`は年月だけを受け取り、PostgreSQLに保存されたCOMPLETED済み取引を集計する。ECSデプロイ、Heartbeat、AI Insightsは後続Phaseで実装する。
 
 ## Architecture
 
@@ -58,7 +58,7 @@ APIはホストのNode.jsで起動し、PostgreSQLだけをDocker Composeで起�
 
 Phase 4・5のAPI起動とCDK操作には、ローカルのAWS CLI ProfileまたはSSO認証が必要である。AWS認証情報をFrontend、ソースコード、`.env`へAccess Keyとして保存しない。認証情報がない場合でも、`npm test`、`npm run typecheck`、`npm run build`、`npm run cdk:synth`は実行できる。
 
-Phase 2でMigrationと業務テーブル、Phase 3でAPI入力検証と明細API、Phase 4でS3/CDKとPresigned URL、Phase 5でSQS/CDKと解析開始API、Phase 6で常駐WorkerとGraceful Shutdown、Phase 7でBedrock RuntimeのConverseアダプター、Tool Use、Zod Validation、合成PNG、実接続スモーク、Phase 8でS3 GetObject、Atomic claim、lease、fencing、OCR結果保存、COMMIT後ACK、Phase 9でRetryable/Permanent分類、FAILED遷移、DLQ Alarm、SNS通知Topicを追加した。ECS ServiceとVPC、Heartbeat、月次Analyticsはまだ追加していない。
+Phase 2でMigrationと業務テーブル、Phase 3でAPI入力検証と明細API、Phase 4でS3/CDKとPresigned URL、Phase 5でSQS/CDKと解析開始API、Phase 6で常駐WorkerとGraceful Shutdown、Phase 7でBedrock RuntimeのConverseアダプター、Tool Use、Zod Validation、合成PNG、実接続スモーク、Phase 8でS3 GetObject、Atomic claim、lease、fencing、OCR結果保存、COMMIT後ACK、Phase 9でRetryable/Permanent分類、FAILED遷移、DLQ Alarm、SNS通知Topic、Phase 10でPostgreSQLを正とする月次Analyticsを追加した。ECS ServiceとVPC、Heartbeat、AI Insightsはまだ追加していない。
 
 ## Environment Variables
 
@@ -112,4 +112,4 @@ S3 Block Public Access、短期Presigned URL、HTTPS、Private RDS、Security Gr
 
 ## 設計レビュー
 
-Phase 1からPhase 9まで完了した。認証なしAPIはloopback host以外で起動できない。Phase 4のS3画像はLifecycleで7日後に削除され、Stack削除時は`RETAIN`でバケットを残す。Phase 5のSQSとDLQはSSE-SQS、SSL強制、redrive設定を持つ。AWSへ接続しない単体テストではFake S3、Fake SQS、Fake Bedrock clientを使用する。Phase 7の既定Bedrockモデルは`jp.amazon.nova-2-lite-v1:0`で、画像入力と強制Tool選択、Tool input schemaを使い、JSON Schema Structured Outputとstrict非対応をZodで補う。Phase 8ではAtomic claim、lease、processing token、S3 GetObject、OCR保存Transaction、COMMIT後ACKを実装した。Phase 9では処理段階別のerror classification、FAILED遷移、failure code制約、DLQ Alarm、SNS通知Topicを実装した。Heartbeat、ECS、月次Analytics、Frontend、NAT / Endpoint、Insights API、Image共有、Worker scaling、認証の設計判断は後続Phaseで使用する。
+Phase 1からPhase 10まで完了した。認証なしAPIはloopback host以外で起動できない。Phase 4のS3画像はLifecycleで7日後に削除され、Stack削除時は`RETAIN`でバケットを残す。Phase 5のSQSとDLQはSSE-SQS、SSL強制、redrive設定を持つ。AWSへ接続しない単体テストではFake S3、Fake SQS、Fake Bedrock clientを使用する。Phase 7の既定Bedrockモデルは`jp.amazon.nova-2-lite-v1:0`で、画像入力と強制Tool選択、Tool input schemaを使い、JSON Schema Structured Outputとstrict非対応をZodで補う。Phase 8ではAtomic claim、lease、processing token、S3 GetObject、OCR保存Transaction、COMMIT後ACKを実装した。Phase 9では処理段階別のerror classification、FAILED遷移、failure code制約、DLQ Alarm、SNS通知Topicを実装した。Phase 10ではWorkerが保存したCOMPLETED済み取引をPostgreSQLから月次集計するEndpointを実装した。Heartbeat、ECS、Frontend、NAT / Endpoint、Insights API、Image共有、Worker scaling、認証の設計判断は後続Phaseで使用する。

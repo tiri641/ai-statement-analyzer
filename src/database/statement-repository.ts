@@ -4,6 +4,13 @@ import {
   ProcessingClaimLostError,
   UniqueConstraintError,
 } from "./errors.js";
+import type {
+  AnalyticsAggregateBucket,
+  AnalyticsDateRange,
+  MonthlyAnalyticsAggregate,
+  MonthlyAnalyticsAggregates,
+  MonthlyAnalyticsRanges,
+} from "../analytics/monthly-analytics.js";
 
 export const STATEMENT_STATUSES = [
   "UPLOAD_PENDING",
@@ -142,6 +149,17 @@ interface TransactionDatabaseRow {
   created_at: Date;
 }
 
+interface AnalyticsOverviewDatabaseRow {
+  total_amount: string;
+  transaction_count: string;
+}
+
+interface AnalyticsBucketDatabaseRow {
+  name: string;
+  amount: string;
+  count: string;
+}
+
 export function normalizeTargetMonth(value: string): string {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) {
     throw new Error("targetMonth must be in YYYY-MM format");
@@ -194,6 +212,26 @@ function mapTransaction(row: TransactionDatabaseRow): TransactionRecord {
     category: row.category,
     subcategory: row.subcategory,
     createdAt: row.created_at,
+  };
+}
+
+function mapAnalyticsInteger(value: string, field: string): number {
+  const parsed = Number(value);
+
+  if (!Number.isSafeInteger(parsed)) {
+    throw new Error(`analytics ${field} is outside the safe integer range`);
+  }
+
+  return parsed;
+}
+
+function mapAnalyticsBucket(
+  row: AnalyticsBucketDatabaseRow,
+): AnalyticsAggregateBucket {
+  return {
+    name: row.name,
+    amount: mapAnalyticsInteger(row.amount, "amount"),
+    count: mapAnalyticsInteger(row.count, "count"),
   };
 }
 
@@ -457,6 +495,84 @@ export class StatementRepository {
     );
 
     return result.rows.map(mapTransaction);
+  }
+
+  public async findMonthlyAnalytics(
+    ranges: MonthlyAnalyticsRanges,
+  ): Promise<MonthlyAnalyticsAggregates> {
+    const [current, previous] = await Promise.all([
+      this.findMonthlyAggregate(ranges.current),
+      this.findMonthlyAggregate(ranges.previous),
+    ]);
+
+    return { current, previous };
+  }
+
+  private async findMonthlyAggregate(
+    range: AnalyticsDateRange,
+  ): Promise<MonthlyAnalyticsAggregate> {
+    const source = `
+      FROM transactions AS t
+      INNER JOIN statements AS s
+        ON s.id = t.statement_id
+      WHERE s.status = 'COMPLETED'
+        AND t.transaction_date >= $1::date
+        AND t.transaction_date < $2::date
+    `;
+    const parameters = [range.start, range.end];
+
+    const [overview, categories, merchants] = await Promise.all([
+      this.pool.query<AnalyticsOverviewDatabaseRow>(
+        `
+          SELECT
+            COALESCE(SUM(t.amount), 0)::text AS total_amount,
+            COUNT(*)::text AS transaction_count
+          ${source}
+        `,
+        parameters,
+      ),
+      this.pool.query<AnalyticsBucketDatabaseRow>(
+        `
+          SELECT
+            t.category AS name,
+            COALESCE(SUM(t.amount), 0)::text AS amount,
+            COUNT(*)::text AS count
+          ${source}
+          GROUP BY t.category
+          ORDER BY SUM(t.amount) DESC, t.category ASC
+        `,
+        parameters,
+      ),
+      this.pool.query<AnalyticsBucketDatabaseRow>(
+        `
+          SELECT
+            t.merchant_name AS name,
+            COALESCE(SUM(t.amount), 0)::text AS amount,
+            COUNT(*)::text AS count
+          ${source}
+          GROUP BY t.merchant_name
+          ORDER BY SUM(t.amount) DESC, t.merchant_name ASC
+        `,
+        parameters,
+      ),
+    ]);
+    const overviewRow = getFirstRow(
+      overview,
+      "monthly analytics overviewがありません",
+    );
+
+    return {
+      totalAmount: mapAnalyticsInteger(
+        overviewRow.total_amount,
+        "total_amount",
+      ),
+      transactionCount: mapAnalyticsInteger(
+        overviewRow.transaction_count,
+        "transaction_count",
+      ),
+      categories: categories.rows.map(mapAnalyticsBucket),
+      merchants: merchants.rows.map(mapAnalyticsBucket),
+    };
   }
 
   public async saveTransactionsAndComplete(

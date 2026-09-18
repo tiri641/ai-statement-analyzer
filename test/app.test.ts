@@ -20,6 +20,22 @@ function createTestApp(database: HealthDatabase) {
       markQueued: async () => null,
       resetQueuedToUploaded: async () => null,
     },
+    analytics: {
+      findMonthlyAnalytics: async () => ({
+        current: {
+          totalAmount: 0,
+          transactionCount: 0,
+          categories: [],
+          merchants: [],
+        },
+        previous: {
+          totalAmount: 0,
+          transactionCount: 0,
+          categories: [],
+          merchants: [],
+        },
+      }),
+    },
     objectStore: {
       createPresignedPutUrl: async () => "https://s3.example.test/upload",
       headObject: async () => ({
