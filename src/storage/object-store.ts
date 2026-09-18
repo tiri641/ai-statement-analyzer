@@ -26,3 +26,10 @@ export class ObjectNotFoundError extends Error {
     this.name = "ObjectNotFoundError";
   }
 }
+
+export class InvalidSourceObjectError extends Error {
+  public constructor(message = "S3 object is invalid") {
+    super(message);
+    this.name = "InvalidSourceObjectError";
+  }
+}

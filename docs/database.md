@@ -29,6 +29,16 @@ Migration 003は、既存statementの画像からContent-Typeとサイズを安�
 
 `transactions`の`UNIQUE(statement_id, line_number)`に対して`ON CONFLICT DO UPDATE`を使うため、同じstatementを再処理しても取引行が二重にならない。完了時にはactive lease、token、failure情報をクリアする。
 
+## Phase 9のFAILED遷移
+
+Phase 9では、修復不能な入力・OCRエラーを`FAILED`へ確定する。`StatementRepository.markFailed`は次の条件を同じUPDATE文で確認する。
+
+- statusが`PROCESSING`
+- processing tokenが一致する
+- processing leaseがDB時刻で有効である
+
+更新成功時は`failure_code`、安全な`failure_message`を保存し、processing tokenとleaseをNULLにする。条件に一致しない場合は0行更新として返し、古いWorkerが新しいWorkerの状態を上書きしない。failure codeはMigration 004のCHECK制約でallowlistに限定する。
+
 既定のDB leaseは10分である。SQS Main QueueのVisibility Timeoutは300秒のままとし、Phase 8ではHeartbeatを実装しない。Visibility Timeoutを超える処理時間を本番で許可する前に、Heartbeatとlease期間の組み合わせを後続Phaseで決定する。
 
 Phase 2・3の詳細な実装判断と学習記録は [learning/phase-02.md](../learning/phase-02.md) と [learning/phase-03.md](../learning/phase-03.md) を参照する。

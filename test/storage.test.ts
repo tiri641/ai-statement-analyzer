@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { S3Client } from "@aws-sdk/client-s3";
-import { ObjectNotFoundError } from "../src/storage/object-store.ts";
+import {
+  InvalidSourceObjectError,
+  ObjectNotFoundError,
+} from "../src/storage/object-store.ts";
 import { S3ObjectStore } from "../src/storage/s3-object-store.ts";
 
 test("S3ObjectStoreはContent-Typeを署名したPresigned PUT URLを作成する", async () => {
@@ -184,7 +187,9 @@ test("S3ObjectStoreはGetObjectのBody長不一致を拒否する", async () => 
 
   await assert.rejects(
     store.getObject("statements/statement-id/source"),
-    /Body length does not match Content-Length/,
+    (error: unknown) =>
+      error instanceof InvalidSourceObjectError &&
+      error.message === "S3 object Body length does not match Content-Length",
   );
 });
 

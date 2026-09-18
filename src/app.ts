@@ -80,8 +80,11 @@ function isJsonContentType(value: string | undefined): boolean {
 }
 
 const PUBLIC_FAILURE_MESSAGES: Record<string, string> = {
+  SOURCE_OBJECT_NOT_FOUND: "明細画像が見つかりません。",
+  SOURCE_OBJECT_INVALID: "明細画像の情報が不正です。",
   UNSUPPORTED_IMAGE: "対応していない画像形式です。",
   INVALID_OCR_RESPONSE: "明細を解析できませんでした。",
+  OCR_NON_RETRYABLE: "明細を解析できませんでした。",
   PROCESSING_FAILED: "明細を処理できませんでした。",
 };
 

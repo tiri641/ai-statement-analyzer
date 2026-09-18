@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createAnalyzeJobHandler } from "../src/worker/analyze-job-handler.ts";
+import { InvalidOcrImageError } from "../src/ai/bedrock-ocr.ts";
 import type {
   OcrAnalysisResult,
   OcrImageInput,
@@ -103,6 +104,7 @@ test("Analyze Job HandlerはclaimからCOMMITまでの依存呼び出し順を�
       ) => {
         events.push(`save:${id}:${token}:${transactions.length}`);
       },
+      markFailed: async () => false,
     },
     objectStore: createObjectStore(async (key, options) => {
       events.push(`get:${key}`);
@@ -158,6 +160,7 @@ test("Analyze Job HandlerはCOMPLETEDの重複Messageを追加処理せずACKす
       findById: async () => createStatement("COMPLETED"),
       claimForProcessing: async () => null,
       saveTransactionsAndComplete: async () => undefined,
+      markFailed: async () => false,
     },
     objectStore: createObjectStore(async () => {
       getCount += 1;
@@ -184,6 +187,7 @@ test("Analyze Job Handlerは存在しないstatementの孤立MessageをACKする
       findById: async () => null,
       claimForProcessing: async () => null,
       saveTransactionsAndComplete: async () => undefined,
+      markFailed: async () => false,
     },
     objectStore: createObjectStore(async () => {
       throw new Error("S3 must not be called");
@@ -202,6 +206,7 @@ test("Analyze Job Handlerは有効なPROCESSINGの重複MessageをACKしない",
       findById: async () => createStatement("PROCESSING"),
       claimForProcessing: async () => null,
       saveTransactionsAndComplete: async () => undefined,
+      markFailed: async () => false,
     },
     objectStore: createObjectStore(async () => {
       throw new Error("S3 must not be called");
@@ -216,11 +221,16 @@ test("Analyze Job Handlerは有効なPROCESSINGの重複MessageをACKしない",
 
 test("Analyze Job HandlerはS3 Metadata不一致時にOCRを呼ばない", async () => {
   let ocrCount = 0;
+  let failure: unknown;
   const handler = createAnalyzeJobHandler({
     statements: {
       findById: async () => createStatement("PROCESSING"),
       claimForProcessing: async () => claim,
       saveTransactionsAndComplete: async () => undefined,
+      markFailed: async (...args) => {
+        failure = args;
+        return true;
+      },
     },
     objectStore: createObjectStore(async () => ({
       bytes: new Uint8Array([1, 2, 3, 4]),
@@ -234,8 +244,97 @@ test("Analyze Job HandlerはS3 Metadata不一致時にOCRを呼ばない", async
     tokenGenerator: () => claim.processingToken,
   });
 
-  await assert.rejects(handler(job), /S3 object metadata does not match/);
+  assert.equal(await handler(job), "ACK");
   assert.equal(ocrCount, 0);
+  assert.deepEqual(failure, [
+    statementId,
+    claim.processingToken,
+    "SOURCE_OBJECT_INVALID",
+    "明細画像の情報が不正です。",
+  ]);
+});
+
+test("Analyze Job Handlerは対応外画像をFAILEDへ更新してACKする", async () => {
+  let failure: unknown;
+  const handler = createAnalyzeJobHandler({
+    statements: {
+      findById: async () => createStatement("PROCESSING"),
+      claimForProcessing: async () => claim,
+      saveTransactionsAndComplete: async () => undefined,
+      markFailed: async (...args) => {
+        failure = args;
+        return true;
+      },
+    },
+    objectStore: createObjectStore(async () => ({
+      bytes: new Uint8Array([1, 2, 3, 4]),
+      contentType: "image/jpeg",
+      contentLength: 4,
+    })),
+    analyzer: createAnalyzer(async () => {
+      throw new InvalidOcrImageError("unsupported");
+    }),
+    tokenGenerator: () => claim.processingToken,
+  });
+
+  assert.equal(await handler(job), "ACK");
+  assert.deepEqual(failure, [
+    statementId,
+    claim.processingToken,
+    "UNSUPPORTED_IMAGE",
+    "対応していない画像形式です。",
+  ]);
+});
+
+test("Analyze Job HandlerはFAILED更新の競合時にACKしない", async () => {
+  const handler = createAnalyzeJobHandler({
+    statements: {
+      findById: async () => createStatement("PROCESSING"),
+      claimForProcessing: async () => claim,
+      saveTransactionsAndComplete: async () => undefined,
+      markFailed: async () => false,
+    },
+    objectStore: createObjectStore(async () => ({
+      bytes: new Uint8Array([1, 2, 3, 4]),
+      contentType: "image/jpeg",
+      contentLength: 4,
+    })),
+    analyzer: createAnalyzer(async () => {
+      throw new InvalidOcrImageError("unsupported");
+    }),
+    tokenGenerator: () => claim.processingToken,
+  });
+
+  assert.equal(await handler(job), "RETRY");
+});
+
+test("Analyze Job HandlerはBedrockの一時障害でACKせずFAILEDにも変更しない", async () => {
+  let markFailedCount = 0;
+  const error = new Error("throttled");
+  error.name = "ThrottlingException";
+  const handler = createAnalyzeJobHandler({
+    statements: {
+      findById: async () => createStatement("PROCESSING"),
+      claimForProcessing: async () => claim,
+      saveTransactionsAndComplete: async () => undefined,
+      markFailed: async () => {
+        markFailedCount += 1;
+        return true;
+      },
+    },
+    objectStore: createObjectStore(async () => ({
+      bytes: new Uint8Array([1, 2, 3, 4]),
+      contentType: "image/jpeg",
+      contentLength: 4,
+    })),
+    analyzer: createAnalyzer(async () => {
+      throw error;
+    }),
+    tokenGenerator: () => claim.processingToken,
+  });
+
+  assert.equal(await handler(job), "RETRY");
+  assert.equal(markFailedCount, 0);
 });
 
 test("AnalyzeWorkerはhandlerのRETRY結果でMessageを削除しない", async () => {

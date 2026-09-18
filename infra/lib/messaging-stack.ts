@@ -1,10 +1,15 @@
 import * as cdk from "aws-cdk-lib";
+import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
+import * as cloudwatchActions from "aws-cdk-lib/aws-cloudwatch-actions";
+import * as sns from "aws-cdk-lib/aws-sns";
 import { Construct } from "constructs";
 import * as sqs from "aws-cdk-lib/aws-sqs";
 
 export class MessagingStack extends cdk.Stack {
   public readonly analyzeQueue: sqs.Queue;
   public readonly analyzeDlq: sqs.Queue;
+  public readonly analyzeAlertsTopic: sns.Topic;
+  public readonly analyzeDlqAlarm: cloudwatch.Alarm;
 
   public constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, {
@@ -45,6 +50,27 @@ export class MessagingStack extends cdk.Stack {
       },
     });
 
+    this.analyzeAlertsTopic = new sns.Topic(this, "AnalyzeAlertsTopic", {
+      displayName: "AI Statement Analyzer alerts",
+    });
+
+    this.analyzeDlqAlarm = new cloudwatch.Alarm(this, "AnalyzeDlqAlarm", {
+      alarmName: "ai-statement-analyzer-analyze-dlq-visible",
+      metric: this.analyzeDlq.metricApproximateNumberOfMessagesVisible({
+        period: cdk.Duration.minutes(1),
+        statistic: "Maximum",
+      }),
+      threshold: 1,
+      evaluationPeriods: 1,
+      datapointsToAlarm: 1,
+      comparisonOperator:
+        cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
+    this.analyzeDlqAlarm.addAlarmAction(
+      new cloudwatchActions.SnsAction(this.analyzeAlertsTopic),
+    );
+
     new cdk.CfnOutput(this, "AnalyzeQueueUrl", {
       value: this.analyzeQueue.queueUrl,
       description: "解析ジョブを送信するSQS Standard QueueのURL",
@@ -60,6 +86,14 @@ export class MessagingStack extends cdk.Stack {
     new cdk.CfnOutput(this, "AnalyzeDlqArn", {
       value: this.analyzeDlq.queueArn,
       description: "解析ジョブのDead Letter QueueのARN",
+    });
+    new cdk.CfnOutput(this, "AnalyzeDlqAlarmArn", {
+      value: this.analyzeDlqAlarm.alarmArn,
+      description: "解析ジョブDLQのCloudWatch Alarm ARN",
+    });
+    new cdk.CfnOutput(this, "AnalyzeAlertsTopicArn", {
+      value: this.analyzeAlertsTopic.topicArn,
+      description: "解析ジョブの通知SNS Topic ARN",
     });
   }
 }

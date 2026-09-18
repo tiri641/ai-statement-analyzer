@@ -11,6 +11,7 @@ import {
   normalizeTargetMonth,
   type StatementStatus,
 } from "../src/database/statement-repository.ts";
+import type { AnalyzeFailureCode } from "../src/worker/analyze-job-error.ts";
 
 test("targetMonthを月初の日付へ正規化する", () => {
   assert.equal(normalizeTargetMonth("2026-08"), "2026-08-01");
@@ -64,7 +65,7 @@ databaseTest("Migrationを再実行してもエラーにならない", async () 
     `,
   );
 
-  assert.equal(result.rows[0]?.count, "3");
+  assert.equal(result.rows[0]?.count, "4");
 });
 
 databaseTest("月別・日付・merchant・category用のIndexが作成される", async () => {
@@ -468,6 +469,41 @@ databaseTest("statementsは上限を超えるContent-Lengthを拒否する", asy
   );
 });
 
+databaseTest("statementsのfailure codeとmessageを制約する", async () => {
+  assert.ok(pool);
+  assert.ok(repository);
+
+  await repository.create({
+    id: statementId,
+    s3Key: "statements/statement-1.jpg",
+    targetMonth: "2026-08",
+    contentType: "image/jpeg",
+    contentLength: 1024,
+    status: "FAILED",
+  });
+
+  await assert.rejects(
+    pool.query(
+      `
+        UPDATE statements
+        SET failure_code = $2
+        WHERE id = $1
+      `,
+      [statementId, "internal-password=secret"],
+    ),
+  );
+  await assert.rejects(
+    pool.query(
+      `
+        UPDATE statements
+        SET failure_message = $2
+        WHERE id = $1
+      `,
+      [statementId, "x".repeat(501)],
+    ),
+  );
+});
+
 databaseTest("存在しないstatement_idの取引登録を拒否する", async () => {
   assert.ok(pool);
 
@@ -753,6 +789,100 @@ databaseTest("古いprocessing tokenは取引保存を完了できない", async
     [statementId],
   );
   assert.equal(transactionCount.rows[0]?.count, "0");
+});
+
+databaseTest("有効なprocessing tokenで恒久エラーをFAILEDへ更新できる", async () => {
+  assert.ok(repository);
+
+  await repository.create({
+    id: statementId,
+    s3Key: "statements/statement-1.jpg",
+    targetMonth: "2026-08",
+    contentType: "image/jpeg",
+    contentLength: 1024,
+    status: "QUEUED",
+  });
+
+  const processingToken = "00000000-0000-4000-8000-000000000011";
+  assert.ok(await repository.claimForProcessing(statementId, processingToken));
+
+  const failureCode: AnalyzeFailureCode = "UNSUPPORTED_IMAGE";
+  const marked = await repository.markFailed(
+    statementId,
+    processingToken,
+    failureCode,
+    "対応していない画像形式です。",
+  );
+
+  assert.equal(marked, true);
+  const statement = await repository.findById(statementId);
+  assert.equal(statement?.status, "FAILED");
+  assert.equal(statement?.failureCode, failureCode);
+  assert.equal(statement?.failureMessage, "対応していない画像形式です。");
+  assert.equal(statement?.processingToken, null);
+  assert.equal(statement?.processingLeaseExpiresAt, null);
+  assert.equal(statement?.processedAt, null);
+});
+
+databaseTest("異なるprocessing tokenではFAILEDへ更新できない", async () => {
+  assert.ok(repository);
+
+  await repository.create({
+    id: statementId,
+    s3Key: "statements/statement-1.jpg",
+    targetMonth: "2026-08",
+    contentType: "image/jpeg",
+    contentLength: 1024,
+    status: "QUEUED",
+  });
+
+  const processingToken = "00000000-0000-4000-8000-000000000011";
+  assert.ok(await repository.claimForProcessing(statementId, processingToken));
+
+  const marked = await repository.markFailed(
+    statementId,
+    "00000000-0000-4000-8000-000000000012",
+    "UNSUPPORTED_IMAGE",
+    "対応していない画像形式です。",
+  );
+
+  assert.equal(marked, false);
+  assert.equal((await repository.findById(statementId))?.status, "PROCESSING");
+});
+
+databaseTest("期限切れのprocessing leaseではFAILEDへ更新できない", async () => {
+  assert.ok(pool);
+  assert.ok(repository);
+
+  await repository.create({
+    id: statementId,
+    s3Key: "statements/statement-1.jpg",
+    targetMonth: "2026-08",
+    contentType: "image/jpeg",
+    contentLength: 1024,
+    status: "QUEUED",
+  });
+
+  const processingToken = "00000000-0000-4000-8000-000000000011";
+  assert.ok(await repository.claimForProcessing(statementId, processingToken));
+  await pool.query(
+    `
+      UPDATE statements
+      SET processing_lease_expires_at = NOW() - INTERVAL '1 second'
+      WHERE id = $1
+    `,
+    [statementId],
+  );
+
+  const marked = await repository.markFailed(
+    statementId,
+    processingToken,
+    "UNSUPPORTED_IMAGE",
+    "対応していない画像形式です。",
+  );
+
+  assert.equal(marked, false);
+  assert.equal((await repository.findById(statementId))?.status, "PROCESSING");
 });
 
 databaseTest("同じline numberを再保存しても取引は重複しない", async () => {

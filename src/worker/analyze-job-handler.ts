@@ -11,9 +11,17 @@ import type {
 import type {
   CreateTransactionInput,
   ProcessingClaim,
+  StatementFailureCode,
   StatementRecord,
 } from "../database/statement-repository.js";
-import type { StatementObjectStore } from "../storage/object-store.js";
+import {
+  InvalidSourceObjectError,
+  type StatementObjectStore,
+} from "../storage/object-store.js";
+import {
+  classifyAnalyzeJobError,
+  type AnalyzeJobErrorStage,
+} from "./analyze-job-error.js";
 
 export interface ProcessingStatementStore {
   findById(id: string): Promise<StatementRecord | null>;
@@ -27,6 +35,12 @@ export interface ProcessingStatementStore {
     processingToken: string,
     transactions: CreateTransactionInput[],
   ): Promise<void>;
+  markFailed(
+    statementId: string,
+    processingToken: string,
+    failureCode: StatementFailureCode,
+    failureMessage: string,
+  ): Promise<boolean>;
 }
 
 export interface OcrAnalyzer {
@@ -46,12 +60,6 @@ export interface AnalyzeJobHandlerDependencies {
 
 function isTerminalStatus(status: StatementRecord["status"]): boolean {
   return status === "COMPLETED" || status === "FAILED";
-}
-
-function createObjectMetadataMismatchError(): Error {
-  const error = new Error("S3 object metadata does not match statement");
-  error.name = "ObjectMetadataMismatchError";
-  return error;
 }
 
 function toCreateTransactionInputs(
@@ -94,34 +102,57 @@ export function createAnalyzeJobHandler(
       return resolveUnclaimedJob(dependencies.statements, job.statementId);
     }
 
-    const object = await dependencies.objectStore.getObject(
-      claim.s3Key,
-      options?.signal ? { signal: options.signal } : undefined,
-    );
+    let stage: AnalyzeJobErrorStage = "object-store";
 
-    if (
-      object.contentType !== claim.contentType ||
-      object.contentLength !== claim.contentLength ||
-      object.bytes.byteLength !== claim.contentLength
-    ) {
-      throw createObjectMetadataMismatchError();
+    try {
+      const object = await dependencies.objectStore.getObject(
+        claim.s3Key,
+        options?.signal ? { signal: options.signal } : undefined,
+      );
+
+      if (
+        object.contentType !== claim.contentType ||
+        object.contentLength !== claim.contentLength ||
+        object.bytes.byteLength !== claim.contentLength
+      ) {
+        throw new InvalidSourceObjectError(
+          "S3 object metadata does not match statement",
+        );
+      }
+
+      const image: OcrImageInput = {
+        bytes: object.bytes,
+        contentType: claim.contentType,
+      };
+      stage = "ocr";
+      const analysis = await dependencies.analyzer.analyze(
+        image,
+        options?.signal ? { signal: options.signal } : undefined,
+      );
+
+      stage = "database";
+      await dependencies.statements.saveTransactionsAndComplete(
+        claim.statementId,
+        claim.processingToken,
+        toCreateTransactionInputs(analysis),
+      );
+
+      return "ACK";
+    } catch (error) {
+      const classification = classifyAnalyzeJobError(stage, error);
+
+      if (classification.disposition === "RETRYABLE") {
+        return "RETRY";
+      }
+
+      const markedFailed = await dependencies.statements.markFailed(
+        claim.statementId,
+        claim.processingToken,
+        classification.failureCode,
+        classification.failureMessage,
+      );
+
+      return markedFailed ? "ACK" : "RETRY";
     }
-
-    const image: OcrImageInput = {
-      bytes: object.bytes,
-      contentType: claim.contentType,
-    };
-    const analysis = await dependencies.analyzer.analyze(
-      image,
-      options?.signal ? { signal: options.signal } : undefined,
-    );
-
-    await dependencies.statements.saveTransactionsAndComplete(
-      claim.statementId,
-      claim.processingToken,
-      toCreateTransactionInputs(analysis),
-    );
-
-    return "ACK";
   };
 }

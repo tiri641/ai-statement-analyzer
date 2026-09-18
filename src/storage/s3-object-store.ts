@@ -8,6 +8,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { MAX_STATEMENT_IMAGE_BYTES } from "../config/limits.js";
 import {
   type DownloadedObject,
+  InvalidSourceObjectError,
   ObjectNotFoundError,
   type ObjectMetadata,
   type StatementObjectStore,
@@ -69,7 +70,9 @@ function isWebStreamTransformableBody(
 async function readObjectBody(body: unknown): Promise<Uint8Array> {
   if (body instanceof Uint8Array) {
     if (body.byteLength > MAX_STATEMENT_IMAGE_BYTES) {
-      throw new Error("S3 object is larger than the image limit");
+      throw new InvalidSourceObjectError(
+        "S3 object is larger than the image limit",
+      );
     }
     return body;
   }
@@ -85,7 +88,9 @@ async function readObjectBody(body: unknown): Promise<Uint8Array> {
 
       totalLength += chunk.byteLength;
       if (totalLength > MAX_STATEMENT_IMAGE_BYTES) {
-        throw new Error("S3 object is larger than the image limit");
+        throw new InvalidSourceObjectError(
+          "S3 object is larger than the image limit",
+        );
       }
       chunks.push(chunk);
     }
@@ -98,13 +103,17 @@ async function readObjectBody(body: unknown): Promise<Uint8Array> {
           break;
         }
         if (!(result.value instanceof Uint8Array)) {
-          throw new Error("S3 object Body contains an unsupported chunk");
+          throw new InvalidSourceObjectError(
+            "S3 object Body contains an unsupported chunk",
+          );
         }
 
         totalLength += result.value.byteLength;
         if (totalLength > MAX_STATEMENT_IMAGE_BYTES) {
           await reader.cancel?.("S3 object is larger than the image limit");
-          throw new Error("S3 object is larger than the image limit");
+          throw new InvalidSourceObjectError(
+            "S3 object is larger than the image limit",
+          );
         }
         chunks.push(result.value);
       }
@@ -112,7 +121,9 @@ async function readObjectBody(body: unknown): Promise<Uint8Array> {
       reader.releaseLock?.();
     }
   } else {
-    throw new Error("S3 object Body does not support bounded reading");
+    throw new InvalidSourceObjectError(
+      "S3 object Body does not support bounded reading",
+    );
   }
 
   const bytes = new Uint8Array(totalLength);
@@ -194,18 +205,24 @@ export class S3ObjectStore implements StatementObjectStore {
       );
 
       if (typeof result.ContentLength !== "number") {
-        throw new Error("S3 object Content-Length is missing");
+        throw new InvalidSourceObjectError(
+          "S3 object Content-Length is missing",
+        );
       }
       if (
         result.ContentLength < 1 ||
         result.ContentLength > MAX_STATEMENT_IMAGE_BYTES
       ) {
-        throw new Error("S3 object Content-Length is outside the image limit");
+        throw new InvalidSourceObjectError(
+          "S3 object Content-Length is outside the image limit",
+        );
       }
 
       const bytes = await readObjectBody(result.Body);
       if (bytes.byteLength !== result.ContentLength) {
-        throw new Error("S3 object Body length does not match Content-Length");
+        throw new InvalidSourceObjectError(
+          "S3 object Body length does not match Content-Length",
+        );
       }
 
       return {

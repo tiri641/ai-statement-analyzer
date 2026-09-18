@@ -12,6 +12,8 @@ test("MessagingStackはStandard QueueとDLQを安全な設定で定義する", (
   const template = Template.fromStack(stack);
 
   template.resourceCountIs("AWS::SQS::Queue", 2);
+  template.resourceCountIs("AWS::SNS::Topic", 1);
+  template.resourceCountIs("AWS::CloudWatch::Alarm", 1);
   template.hasResourceProperties("AWS::SQS::Queue", {
     MessageRetentionPeriod: 345600,
     ReceiveMessageWaitTimeSeconds: 20,
@@ -35,4 +37,23 @@ test("MessagingStackはStandard QueueとDLQを安全な設定で定義する", (
   template.hasOutput("AnalyzeQueueArn", {});
   template.hasOutput("AnalyzeDlqUrl", {});
   template.hasOutput("AnalyzeDlqArn", {});
+  template.hasOutput("AnalyzeDlqAlarmArn", {});
+  template.hasOutput("AnalyzeAlertsTopicArn", {});
+
+  template.hasResourceProperties("AWS::CloudWatch::Alarm", {
+    AlarmName: "ai-statement-analyzer-analyze-dlq-visible",
+    Threshold: 1,
+    EvaluationPeriods: 1,
+    DatapointsToAlarm: 1,
+    ComparisonOperator: "GreaterThanOrEqualToThreshold",
+    TreatMissingData: "notBreaching",
+    MetricName: "ApproximateNumberOfMessagesVisible",
+    Namespace: "AWS/SQS",
+    Statistic: "Maximum",
+    Period: 60,
+  });
+
+  const alarms = template.findResources("AWS::CloudWatch::Alarm");
+  const alarm = Object.values(alarms)[0];
+  assert.equal(alarm?.Properties?.AlarmActions?.length, 1);
 });
