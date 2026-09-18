@@ -608,6 +608,30 @@ test("FAILEDのstatementは安全なfailure情報だけを返す", async () => {
   });
 });
 
+test("Phase 9のfailure codeは内部failure messageを公開せずに返す", async () => {
+  const app = createTestApp({
+    findById: async () =>
+      createStatementRecord({
+        status: "FAILED",
+        failureCode: "SOURCE_OBJECT_NOT_FOUND",
+        failureMessage: "s3://private-bucket/card-number=1234",
+      }),
+  });
+
+  const response = await app.request(`/statements/${statementId}`);
+
+  assert.deepEqual(await response.json(), {
+    statementId,
+    targetMonth: "2026-08",
+    status: "FAILED",
+    processedAt: null,
+    failure: {
+      code: "SOURCE_OBJECT_NOT_FOUND",
+      message: "明細画像が見つかりません。",
+    },
+  });
+});
+
 test("未知のfailure codeと内部failure messageを公開しない", async () => {
   const app = createTestApp({
     findById: async () =>

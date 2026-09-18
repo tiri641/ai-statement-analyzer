@@ -24,7 +24,7 @@ Message bodyは小さくし、`statementId`だけを入れる。
 |---|---:|---:|
 | 種類 | Standard | Standard |
 | Message保持期間 | 4日 | 14日 |
-| Visibility Timeout | 300秒 | 既定値 |
+| Visibility Timeout | 900秒 | 既定値 |
 | ReceiveのLong Poll | 20秒 | - |
 | 暗号化 | SSE-SQS | SSE-SQS |
 | SSL強制 | 有効 | 有効 |
@@ -55,8 +55,24 @@ Phase 6の常駐Workerは`src/worker/analyze-worker.ts`にあり、`npm run work
 
 Phase 5のConsumerがMessageを削除しないと、Visibility Timeout後に再配送される。3回目の受信後も削除されなければ、redrive policyによってDLQへ移動する。DLQは通常処理から隔離された調査対象であり、移動しただけで問題が解決したことにはならない。
 
-- Retry候補: 一時的なAWS APIエラー、ネットワークエラー、後続PhaseのBedrock throttling。
-- Retry不要候補: 不正画像、対応外形式、修復不能なValidationエラー。ただしPhase 5では処理分類をまだ実装せず、不正Messageも削除せずDLQで確認できるようにする。
+- Retry候補: 一時的なAWS APIエラー、ネットワークエラー、Bedrock throttling、timeout、service unavailable。
+- Retry不要候補: S3 object不存在、Metadata不一致、対応外画像、修復不能なOCR応答。
+
+Phase 9では、Retryable errorの場合はMessageを削除せず、Visibility Timeout後の再配送に任せる。Permanent errorの場合はWorkerがDBのstatementを`FAILED`へ更新し、そのDB更新が成功した後にMessageを削除する。`FAILED`更新に失敗した場合はMessageを削除しない。
+
+Main Queueの`maxReceiveCount`は3のままとし、Retryable errorが解消しないMessageはDLQへ移動する。Visibility TimeoutはDB leaseの10分より長い900秒に設定し、lease期限切れ前の重複受信でreceive countを消費しないようにする。DLQの`ApproximateNumberOfMessagesVisible`が1以上になるとCloudWatch AlarmがSNS Topicへ通知する。SNS TopicはAmazon Q Developer in chat applicationsへ関連付けてSlackへ通知できる。
+
+DLQからの無条件自動redriveは行わない。原因修正、対象Message、statementのlease期限を確認した後、運用者がControlled redriveを開始する。SQSの`StartMessageMoveTask`を使う例:
+
+```bash
+aws sqs start-message-move-task \
+  --source-arn "$SQS_DLQ_ARN" \
+  --destination-arn "$SQS_QUEUE_ARN" \
+  --max-number-of-messages-per-second 1 \
+  --region "$AWS_REGION"
+```
+
+再投入前に、原因が修正済みであることと、DB leaseが期限切れまたは再処理可能な状態であることを確認する。Redrive権限はアプリケーションWorkerへ付与せず、運用者のAWS権限で実行する。
 
 AWS SDK v3の通信Retryと、SQSがVisibility Timeout後に行う再配送は別である。SDKの短い通信Retryで直らない処理失敗は、Messageを削除しないことでSQSの再配送へ委ねる。
 
@@ -83,6 +99,6 @@ aws sqs delete-message \
   --region "$AWS_REGION"
 ```
 
-確認後はテストMessageを削除する。DLQへ移動したテストMessageも調査後に削除する。
+確認後はテストMessageを削除する。DLQへ移動したテストMessageも調査後に削除する。Alarm ARNとSNS Topic ARNは`MessagingStack`のCloudFormation Outputで確認する。
 
 参照: [SQS Queue CloudFormation](https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/aws-resource-sqs-queue.html)、[Dead-letter queues](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-dead-letter-queues.html)、[Visibility timeout](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-visibility-timeout.html)、[AWS SDK for JavaScript SQS examples](https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/javascript_sqs_code_examples.html)。

@@ -6,7 +6,7 @@ SQSはMessageを保持・配送するAWSサービスであり、WorkerはSQSか�
 
 ## Workerの処理範囲
 
-Phase 8のWorkerは、`statementId`だけを持つMessageを受信し、次の処理を行う。
+Phase 8・9のWorkerは、`statementId`だけを持つMessageを受信し、次の処理を行う。
 
 1. DBで`QUEUED`または期限切れ`PROCESSING`をAtomic claimする
 2. DBから得たS3 keyとMetadataを使って画像を取得する
@@ -63,8 +63,9 @@ claim失敗後に現在状態を再読込し、statementが存在しない場合
 | handler結果 | DeleteMessage | 用途 |
 |---|---:|---|
 | `void` / `ACK` | 実行 | DB COMMIT成功、またはterminal stateのskip |
-| `RETRY` | 実行しない | 有効な別Worker、未完了状態 |
-| throw | 実行しない | S3、Bedrock、DB、Validationの失敗 |
+| `RETRY` | 実行しない | 有効な別Worker、Retryable error、未完了状態 |
+| Permanent failureをDBへ保存後の`ACK` | 実行 | `FAILED`への更新がCOMMIT済み |
+| throw | 実行しない | DB障害、`markFailed`障害、未分類のWorker障害 |
 
 DeleteMessageはDB COMMITの後だけ実行する。DeleteMessageが失敗した場合も処理失敗として扱い、MessageはSQSから再配送される可能性がある。COMMIT済みの重複Messageは`COMPLETED`を確認して、S3・Bedrock・DB処理を再実行せずACKする。
 
@@ -95,6 +96,20 @@ COMMIT
 DeleteMessage
 ```
 
+## Phase 9のエラー分類
+
+Workerは処理段階とエラー型を使って分類する。S3/DBの未知エラーはRetryableとし、BedrockではSDKの既知のRetryableコードを再試行する。
+
+| failure code | 例 | DB | Message |
+|---|---|---|---|
+| `SOURCE_OBJECT_NOT_FOUND` | S3 404 | `FAILED` | DB更新後に削除 |
+| `SOURCE_OBJECT_INVALID` | Metadata・Body長不一致 | `FAILED` | DB更新後に削除 |
+| `UNSUPPORTED_IMAGE` | 対応外形式・画像サイズ不正 | `FAILED` | DB更新後に削除 |
+| `INVALID_OCR_RESPONSE` | Tool Use・Zod Validation失敗 | `FAILED` | DB更新後に削除 |
+| `OCR_NON_RETRYABLE` | Bedrockの明示的な非再試行エラー | `FAILED` | DB更新後に削除 |
+
+Permanent errorは、`PROCESSING`、processing token、lease未期限切れを条件に`markFailed`する。条件更新が0行の場合は古いWorkerの可能性があるためACKしない。failure messageには例外全文、S3 key、画像情報を保存しない。
+
 ## 障害時の挙動
 
 | 状況 | Workerの動作 | Message |
@@ -103,12 +118,14 @@ DeleteMessage
 | statementが存在しない | 追加処理なし | ACKして削除 |
 | 有効な別Workerが処理中 | ACKしない | 再配送に任せる |
 | `COMPLETED` / `FAILED` | 追加処理なしでACK | 削除する |
-| S3取得・Metadata照合失敗 | 例外、状態は`PROCESSING`のまま | ACKしない |
-| Bedrock・Validation失敗 | 例外、状態は`PROCESSING`のまま | ACKしない |
+| S3 object不存在・画像情報不正 | `FAILED`へ更新 | DB更新後にACK |
+| 対応外画像・OCR応答Validation失敗 | `FAILED`へ更新 | DB更新後にACK |
+| Bedrock throttling・timeout | 状態は`PROCESSING`のまま | ACKしない |
+| S3/DB一時障害 | 状態は`PROCESSING`のまま | ACKしない |
 | DB保存・fencing失敗 | Rollback、ACKしない | 再配送に任せる |
 | DeleteMessage失敗 | ログ、Workerは継続 | 再配送の可能性あり |
 
-Phase 8では失敗理由をretryable/permanentに分類せず、`FAILED`へ更新しない。lease期限後の再claimとMessage再配送をPhase 9の方針へ委ねる。
+Retryable errorが`maxReceiveCount`を超えても解消しない場合はDLQへ移動する。DLQ AlarmはSNS Topicへ通知し、Slackへの通知はAmazon Q Developer in chat applications側で設定する。DLQからのredriveは原因修正後に運用者が明示的に開始する。
 
 ## Graceful Shutdown
 
@@ -125,7 +142,7 @@ Shutdown要求後30秒を超えて処理またはDeleteMessageが完了しない
 
 ## Phase 5の確認用Consumerとの違い
 
-`npm run consume:analyze`の`consumeOneAnalyzeJob`は、QueueのReceive・Validation・Deleteを確認するためのPhase 5用ユーティリティである。Phase 8のOCR処理では使用せず、本番処理経路は`npm run worker`の常駐Workerだけとする。
+`npm run consume:analyze`の`consumeOneAnalyzeJob`は、QueueのReceive・Validation・Deleteを確認するためのPhase 5用ユーティリティである。Phase 8・9のOCR処理では使用せず、本番処理経路は`npm run worker`の常駐Workerだけとする。
 
 ## 設定
 

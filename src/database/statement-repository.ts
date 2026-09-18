@@ -16,6 +16,17 @@ export const STATEMENT_STATUSES = [
 
 export type StatementStatus = (typeof STATEMENT_STATUSES)[number];
 
+export const STATEMENT_FAILURE_CODES = [
+  "SOURCE_OBJECT_NOT_FOUND",
+  "SOURCE_OBJECT_INVALID",
+  "UNSUPPORTED_IMAGE",
+  "INVALID_OCR_RESPONSE",
+  "OCR_NON_RETRYABLE",
+  "PROCESSING_FAILED",
+] as const;
+
+export type StatementFailureCode = (typeof STATEMENT_FAILURE_CODES)[number];
+
 export const DEFAULT_PROCESSING_LEASE_SECONDS = 10 * 60;
 
 export interface CreateStatementInput {
@@ -393,6 +404,35 @@ export class StatementRepository {
 
     const row = result.rows[0];
     return row ? mapStatement(row) : null;
+  }
+
+  public async markFailed(
+    statementId: string,
+    processingToken: string,
+    failureCode: StatementFailureCode,
+    failureMessage: string,
+  ): Promise<boolean> {
+    const result = await this.pool.query(
+      `
+        UPDATE statements
+        SET
+          status = 'FAILED',
+          failure_code = $3,
+          failure_message = $4,
+          processed_at = NULL,
+          processing_lease_expires_at = NULL,
+          processing_token = NULL,
+          updated_at = NOW()
+        WHERE id = $1
+          AND status = 'PROCESSING'
+          AND processing_token = $2
+          AND processing_lease_expires_at > NOW()
+        RETURNING id
+      `,
+      [statementId, processingToken, failureCode, failureMessage],
+    );
+
+    return result.rowCount === 1;
   }
 
   public async findTransactions(statementId: string): Promise<TransactionRecord[]> {

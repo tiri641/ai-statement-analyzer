@@ -15,4 +15,6 @@ Phase 6 Workerでは、`worker_started`、`worker_job_started`、`worker_job_han
 - Worker error count
 - Bedrock error / throttling count
 
-DLQ message count > 0とoldest message ageの閾値超過は通知する。MVPでは過剰なcustom metricsを作らず、AWS service metricsとLogsを優先する。Logs retentionは7〜30日から開始する。
+Phase 9ではDLQの`ApproximateNumberOfMessagesVisible >= 1`をCloudWatch Alarmで検知する。Alarm ActionはMessagingStackが作成するSNS Topicへ接続する。SNS TopicはAmazon Q Developer in chat applicationsへAWS側で関連付け、Slack channelへ通知する。Slack workspace、channel、購読設定、webhookはリポジトリへ保存しない。
+
+DLQからのredriveはAlarmを受けた運用者が原因修正と対象確認を行った後に開始する。無条件自動redriveは行わない。oldest message age、Worker error count、Bedrock error countなどの詳細な監視はPhase 12で追加する。

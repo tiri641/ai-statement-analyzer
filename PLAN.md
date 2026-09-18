@@ -2,7 +2,7 @@
 
 ## 現在の状態
 
-Phase 0（設計）、Phase 1（ローカル開発環境）、Phase 2（Database）、Phase 3（API）の実装・動作確認を完了した。
+Phase 0（設計）からPhase 9（Retry / DLQ）までの実装・動作確認を完了した。
 
 ## 作業ルール
 
@@ -140,7 +140,7 @@ Status: 実装・単体テスト・実AWSスモーク確認完了。`ConverseCom
 
 Phase 8のPlanは[plans/phase-08.md](plans/phase-08.md)に記録した。
 
-Status: 実装・動作確認完了。S3 `GetObject`、boundedな画像bytes変換、`QUEUED -> PROCESSING`のAtomic claim、10分lease、processing tokenによるfencing、Bedrock OCR接続、取引保存と`COMPLETED`更新の同一Transaction、`ON CONFLICT DO UPDATE`、COMMIT後のDeleteMessage、`ACK` / `RETRY` dispositionを追加した。孤立MessageのACKとWeb Stream Bodyの上限付き変換も確認し、FakeテストとPostgreSQL integration testを含む118件に成功した。Heartbeat、FAILED遷移、Retry/DLQ運用、ECS設定はPhase 9以降で扱う。
+Status: 実装・動作確認完了。S3 `GetObject`、boundedな画像bytes変換、`QUEUED -> PROCESSING`のAtomic claim、10分lease、processing tokenによるfencing、Bedrock OCR接続、取引保存と`COMPLETED`更新の同一Transaction、`ON CONFLICT DO UPDATE`、COMMIT後のDeleteMessage、`ACK` / `RETRY` dispositionを追加した。孤立MessageのACKとWeb Stream Bodyの上限付き変換も確認し、FakeテストとPostgreSQL integration testを含む118件に成功した。HeartbeatとECS設定は後続Phaseで扱う。
 
 学習記録は[plans/phase-08.md](plans/phase-08.md)と[learning/phase-08.md](learning/phase-08.md)に記録する。
 
@@ -152,6 +152,16 @@ Status: 実装・動作確認完了。S3 `GetObject`、boundedな画像bytes変�
 2. transient error時にackしない。
 3. permanent error時にFAILED + safe failure_codeを保存する。
 4. maxReceiveCount、DLQ、Alarmを検証する。
+
+Phase 9のPlanは[plans/phase-09.md](plans/phase-09.md)に記録した。
+
+Status: 実装・動作確認完了。処理段階別のエラー分類、S3 object不正・対応外画像・不正OCR応答の`FAILED`遷移、tokenとleaseによる条件付き失敗更新、Retryable errorの未ACK、failure codeのDB allowlist、DLQ CloudWatch Alarm、SNS通知Topicを追加した。Worker shutdownの`AbortError`は再配送対象とし、Main QueueのVisibility TimeoutはDB lease 10分より長い900秒に設定した。`maxReceiveCount: 3`とDLQは維持し、redriveは原因修正後のControlled redriveとした。Slack workspace/channelの関連付けはAWS管理側で行う。
+
+Unit、Handler、API、CDKテストとPostgreSQL integration testを実行した。TDDのRed → Green → Refactorで実装した。
+
+学習記録は[plans/phase-09.md](plans/phase-09.md)と[learning/phase-09.md](learning/phase-09.md)に記録する。
+
+次のGate: RetryableとPermanentの分類、FAILED更新とACK順序、maxReceiveCount、DLQ Alarm、Controlled redrive、SNSからSlackへ通知する責務分離を説明できること。
 
 ### Phase 10: Monthly Analytics
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "ループエンジニアリング開発"
+  short_description: "計画・TDD・レビューで開発を進める"
+  default_prompt: "$loop-engineering-development を使って、計画、TDD、検証、レビューまで進めてください。"
