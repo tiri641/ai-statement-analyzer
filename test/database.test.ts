@@ -6,6 +6,7 @@ import path from "node:path";
 import "dotenv/config";
 import { Pool } from "pg";
 import { runMigrations } from "../src/database/migrate.ts";
+import { getMonthlyAnalyticsRanges } from "../src/analytics/monthly-analytics.ts";
 import {
   StatementRepository,
   normalizeTargetMonth,
@@ -25,10 +26,16 @@ test("不正なtargetMonthを拒否する", () => {
 });
 
 const databaseUrl = process.env.DATABASE_URL;
-const databaseTest = databaseUrl ? test : test.skip;
+if (!databaseUrl) {
+  throw new Error(
+    "DATABASE_URL is required to run database integration tests",
+  );
+}
+
+const databaseTest = test;
 const migrationDirectory = path.resolve(process.cwd(), "migrations");
-const pool = databaseUrl ? new Pool({ connectionString: databaseUrl }) : null;
-const repository = pool ? new StatementRepository(pool) : null;
+const pool = new Pool({ connectionString: databaseUrl });
+const repository = new StatementRepository(pool);
 
 const statementId = "00000000-0000-4000-8000-000000000001";
 const secondStatementId = "00000000-0000-4000-8000-000000000002";
@@ -988,4 +995,98 @@ databaseTest("明細を削除すると関連する取引も削除される", asy
   );
 
   assert.equal(result.rowCount, 0);
+});
+
+databaseTest("Monthly AnalyticsはCOMPLETEDと取引日の半開区間だけを集計する", async () => {
+  assert.ok(pool);
+  assert.ok(repository);
+
+  await repository.create({
+    id: statementId,
+    s3Key: "statements/analytics-current.jpg",
+    targetMonth: "2026-08",
+    contentType: "image/jpeg",
+    contentLength: 1024,
+    status: "COMPLETED",
+  });
+  await repository.create({
+    id: secondStatementId,
+    s3Key: "statements/analytics-previous.jpg",
+    targetMonth: "2026-07",
+    contentType: "image/jpeg",
+    contentLength: 1024,
+    status: "COMPLETED",
+  });
+  await repository.create({
+    id: "00000000-0000-4000-8000-000000000003",
+    s3Key: "statements/analytics-queued.jpg",
+    targetMonth: "2026-08",
+    contentType: "image/jpeg",
+    contentLength: 1024,
+    status: "QUEUED",
+  });
+
+  const insertTransaction = async (
+    transactionStatementId: string,
+    lineNumber: number,
+    date: string,
+    amount: number,
+    merchantName: string,
+  ) => {
+    await pool.query(
+      `
+        INSERT INTO transactions (
+          statement_id,
+          line_number,
+          transaction_date,
+          merchant_raw,
+          merchant_name,
+          amount,
+          category,
+          subcategory
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `,
+      [
+        transactionStatementId,
+        lineNumber,
+        date,
+        merchantName,
+        merchantName,
+        amount,
+        "食費",
+        "その他",
+      ],
+    );
+  };
+
+  await insertTransaction(statementId, 1, "2026-08-01", 100, "カフェ");
+  await insertTransaction(statementId, 2, "2026-08-31", -20, "カフェ");
+  await insertTransaction(statementId, 3, "2026-09-01", 900, "カフェ");
+  await insertTransaction(secondStatementId, 1, "2026-07-31", 50, "カフェ");
+  await insertTransaction(
+    "00000000-0000-4000-8000-000000000003",
+    1,
+    "2026-08-15",
+    500,
+    "除外店舗",
+  );
+
+  const aggregates = await repository.findMonthlyAnalytics(
+    getMonthlyAnalyticsRanges(2026, 8),
+  );
+
+  assert.deepEqual(aggregates, {
+    current: {
+      totalAmount: 80,
+      transactionCount: 2,
+      categories: [{ name: "食費", amount: 80, count: 2 }],
+      merchants: [{ name: "カフェ", amount: 80, count: 2 }],
+    },
+    previous: {
+      totalAmount: 50,
+      transactionCount: 1,
+      categories: [{ name: "食費", amount: 50, count: 1 }],
+      merchants: [{ name: "カフェ", amount: 50, count: 1 }],
+    },
+  });
 });

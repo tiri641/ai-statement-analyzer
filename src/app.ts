@@ -3,9 +3,18 @@ import type { Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { randomUUID } from "node:crypto";
 import {
+  buildMonthlyAnalytics,
+  getMonthlyAnalyticsRanges,
+} from "./analytics/monthly-analytics.js";
+import type {
+  MonthlyAnalyticsAggregates,
+  MonthlyAnalyticsRanges,
+} from "./analytics/monthly-analytics.js";
+import {
   MAX_REQUEST_BODY_BYTES,
   MAX_UPLOAD_BYTES,
   createStatementRequestSchema,
+  monthlyAnalyticsQuerySchema,
   statementIdSchema,
 } from "./api/schemas.js";
 import { UniqueConstraintError } from "./database/errors.js";
@@ -29,9 +38,16 @@ export interface StatementStore {
   resetQueuedToUploaded(id: string): Promise<StatementRecord | null>;
 }
 
+export interface AnalyticsStore {
+  findMonthlyAnalytics(
+    ranges: MonthlyAnalyticsRanges,
+  ): Promise<MonthlyAnalyticsAggregates>;
+}
+
 export interface AppDependencies {
   database: HealthDatabase;
   statements: StatementStore;
+  analytics: AnalyticsStore;
   objectStore: StatementObjectStore;
   jobQueue: AnalyzeJobQueue;
   presignedUrlExpiresSeconds?: number;
@@ -146,6 +162,7 @@ function logQueueFailure(event: string) {
 export function createApp({
   database,
   statements,
+  analytics,
   objectStore,
   jobQueue,
   presignedUrlExpiresSeconds = 300,
@@ -181,6 +198,46 @@ export function createApp({
           database: "unavailable",
         },
         503,
+      );
+    }
+  });
+
+  app.get("/analytics/monthly", async (context) => {
+    const queryValues = context.req.queries();
+    const hasDuplicateQueryParameter = Object.values(queryValues).some(
+      (values) => values.length !== 1,
+    );
+    const query = hasDuplicateQueryParameter
+      ? null
+      : Object.fromEntries(
+          Object.entries(queryValues).map(([key, values]) => [key, values[0]]),
+        );
+    const parsedQuery = monthlyAnalyticsQuerySchema.safeParse(query);
+
+    if (!parsedQuery.success) {
+      return errorResponse(
+        context,
+        400,
+        "INVALID_REQUEST",
+        "入力内容が不正です。",
+      );
+    }
+
+    const { year, month } = parsedQuery.data;
+    const ranges = getMonthlyAnalyticsRanges(year, month);
+
+    try {
+      const aggregates = await analytics.findMonthlyAnalytics(ranges);
+      return context.json(
+        buildMonthlyAnalytics(year, month, aggregates.current, aggregates.previous),
+      );
+    } catch {
+      logDependencyFailure("monthly_analytics_failed");
+      return errorResponse(
+        context,
+        503,
+        "DEPENDENCY_UNAVAILABLE",
+        "依存サービスを利用できません。",
       );
     }
   });

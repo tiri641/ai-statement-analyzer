@@ -2,7 +2,7 @@
 
 ## 現在の状態
 
-Phase 0（設計）からPhase 9（Retry / DLQ）までの実装・動作確認を完了した。
+Phase 0（設計）からPhase 10（Monthly Analytics）までの実装・動作確認を完了した。
 
 ## 作業ルール
 
@@ -170,6 +170,14 @@ Unit、Handler、API、CDKテストとPostgreSQL integration testを実行した
 3. category / merchant集計を追加する。
 4. percentage / previous monthをBackendで追加する。
 5. zero / first month / refundをテストする。
+
+Phase 10のPlanは[plans/phase-10.md](plans/phase-10.md)に記録した。
+
+Status: 実装・動作確認完了。Clientから集計値を受け取らず、Phase 8・9のWorkerが保存した`COMPLETED`済みtransactionsをPostgreSQLの半開区間、SUM、COUNT、GROUP BYで集計する`GET /analytics/monthly`を追加した。割合、前月比、返金、0件、初月、前月0円をBackendで安全に整形し、APIの年月ValidationとDB障害の503処理を追加した。現月・前月の集計は`REPEATABLE READ`の同一Transactionで取得し、Queryの未知キー・重複キーを拒否する。専用PostgreSQLテストDBでUnit、API、Database Integrationを含む155件に成功した。
+
+学習記録は[learning/phase-10.md](learning/phase-10.md)に記録する。
+
+次のGate: SQLの半開区間、`COMPLETED`限定、返金を含む純額、0除算をnullにする理由、Clientから集計データを受け取らない理由を説明できること。
 
 ### Phase 11: AI Spending Insights
 

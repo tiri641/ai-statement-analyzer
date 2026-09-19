@@ -9,10 +9,12 @@
 | POST | /statements/{id}/analyze | `UPLOADED`を`QUEUED`へ更新し、statementIdをSQSへ送信 | Phase 5 |
 | GET | /statements/{id} | statusを取得 | Phase 3 |
 | GET | /transactions?year&month | 完了済み取引を取得 | Phase 10以降 |
-| GET | /analytics/monthly?year&month | SQL Analyticsを取得 | Phase 10以降 |
+| GET | /analytics/monthly?year&month | SQL Analyticsを取得 | Phase 10 |
 | GET | /analytics/monthly/insights?year&month | cacheまたはBedrock Insightsを取得 | Phase 11以降 |
 
 画像本体はAPIへ送らない。Insightsは数値Analyticsと分離し、Bedrock unavailableでも数値Dashboardを表示する。
+
+`GET /analytics/monthly`は年月だけをQuery Parameterで受け取る。集計対象の取引データは、WorkerがOCR後にPostgreSQLへ保存した`COMPLETED`済みstatementのtransactionsから取得する。
 
 ## Phase 4の実装範囲
 

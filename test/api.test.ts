@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createApp, type StatementStore } from "../src/app.ts";
+import {
+  createApp,
+  type AnalyticsStore,
+  type StatementStore,
+} from "../src/app.ts";
+import type { MonthlyAnalyticsAggregates } from "../src/analytics/monthly-analytics.ts";
 import { UniqueConstraintError } from "../src/database/errors.ts";
 import type {
   CreateStatementInput,
@@ -38,6 +43,7 @@ function createTestApp(options: {
   findById?: (id: string) => Promise<StatementRecord | null>;
   markUploaded?: (id: string) => Promise<StatementRecord | null>;
   objectStore?: Partial<StatementObjectStore>;
+  analytics?: AnalyticsStore;
 } = {}) {
   const objectStore: StatementObjectStore = {
     createPresignedPutUrl: async () => "https://s3.example.test/upload",
@@ -68,6 +74,24 @@ function createTestApp(options: {
       query: async () => ({ rows: [] }),
     },
     statements,
+    analytics:
+      options.analytics ??
+      ({
+        findMonthlyAnalytics: async (): Promise<MonthlyAnalyticsAggregates> => ({
+          current: {
+            totalAmount: 0,
+            transactionCount: 0,
+            categories: [],
+            merchants: [],
+          },
+          previous: {
+            totalAmount: 0,
+            transactionCount: 0,
+            categories: [],
+            merchants: [],
+          },
+        }),
+      } satisfies AnalyticsStore),
     objectStore,
     jobQueue: {
       sendAnalyzeJob: async () => undefined,
@@ -650,4 +674,124 @@ test("未知のfailure codeと内部failure messageを公開しない", async ()
     code: "PROCESSING_FAILED",
     message: "明細を処理できませんでした。",
   });
+});
+
+test("Monthly Analytics APIは年月だけを受け取りDB集計を返す", async () => {
+  let receivedRanges:
+    | {
+        current: { start: string; end: string };
+        previous: { start: string; end: string };
+      }
+    | undefined;
+  const app = createTestApp({
+    analytics: {
+      findMonthlyAnalytics: async (ranges) => {
+        receivedRanges = ranges;
+        return {
+          current: {
+            totalAmount: 1000,
+            transactionCount: 2,
+            categories: [{ name: "食費", amount: 1000, count: 2 }],
+            merchants: [{ name: "スーパー", amount: 1000, count: 2 }],
+          },
+          previous: {
+            totalAmount: 800,
+            transactionCount: 1,
+            categories: [{ name: "食費", amount: 800, count: 1 }],
+            merchants: [{ name: "スーパー", amount: 800, count: 1 }],
+          },
+        };
+      },
+    },
+  });
+
+  const response = await app.request(
+    "/analytics/monthly?year=2026&month=8",
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(receivedRanges, {
+    current: { start: "2026-08-01", end: "2026-09-01" },
+    previous: { start: "2026-07-01", end: "2026-08-01" },
+  });
+  assert.deepEqual(await response.json(), {
+    year: 2026,
+    month: 8,
+    totalAmount: 1000,
+    transactionCount: 2,
+    previousMonth: {
+      totalAmount: 800,
+      transactionCount: 1,
+      amountChangePercentage: 25,
+      transactionCountChangePercentage: 100,
+    },
+    categories: [
+      {
+        category: "食費",
+        amount: 1000,
+        count: 2,
+        percentage: 100,
+        previousAmount: 800,
+        amountChangePercentage: 25,
+      },
+    ],
+    merchants: [
+      {
+        merchant: "スーパー",
+        amount: 1000,
+        count: 2,
+        percentage: 100,
+        previousAmount: 800,
+        amountChangePercentage: 25,
+      },
+    ],
+  });
+});
+
+test("Monthly Analytics APIは不正な年月を400で拒否する", async () => {
+  const app = createTestApp();
+
+  for (const path of [
+    "/analytics/monthly",
+    "/analytics/monthly?year=2026&month=13",
+    "/analytics/monthly?year=20x6&month=8",
+    "/analytics/monthly?year=1999&month=8",
+    "/analytics/monthly?year=2101&month=8",
+    "/analytics/monthly?year=2026&month=8&unexpected=value",
+    "/analytics/monthly?year=2026&year=2026&month=8",
+  ]) {
+    const response = await app.request(path);
+
+    assert.equal(response.status, 400, path);
+    assert.deepEqual(await response.json(), {
+      error: {
+        code: "INVALID_REQUEST",
+        message: "入力内容が不正です。",
+      },
+    });
+  }
+});
+
+test("Monthly Analytics APIはDB障害の詳細を返さず503にする", async () => {
+  const app = createTestApp({
+    analytics: {
+      findMonthlyAnalytics: async () => {
+        throw new Error("password=should-not-leak");
+      },
+    },
+  });
+
+  const response = await app.request(
+    "/analytics/monthly?year=2026&month=8",
+  );
+  const body = await response.text();
+
+  assert.equal(response.status, 503);
+  assert.deepEqual(JSON.parse(body), {
+    error: {
+      code: "DEPENDENCY_UNAVAILABLE",
+      message: "依存サービスを利用できません。",
+    },
+  });
+  assert.equal(body.includes("should-not-leak"), false);
 });

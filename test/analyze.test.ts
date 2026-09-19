@@ -83,6 +83,22 @@ function createTestApp(options: {
   return createApp({
     database: { query: async () => ({ rows: [] }) },
     statements,
+    analytics: {
+      findMonthlyAnalytics: async () => ({
+        current: {
+          totalAmount: 0,
+          transactionCount: 0,
+          categories: [],
+          merchants: [],
+        },
+        previous: {
+          totalAmount: 0,
+          transactionCount: 0,
+          categories: [],
+          merchants: [],
+        },
+      }),
+    },
     objectStore,
     jobQueue,
   });

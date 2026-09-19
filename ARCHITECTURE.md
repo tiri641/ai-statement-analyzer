@@ -42,11 +42,11 @@ flowchart LR
 | PostgreSQL | 状態、構造化取引、制約、正確な集計 | LLMの解釈 |
 | Bedrock | OCR、merchant正規化、分類、Analyticsの解釈 | 金額の確定計算、DB整合性保証 |
 
-### Phase 8 / Phase 9の現行実装
+### Phase 8 / Phase 9 / Phase 10の現行実装
 
 Phase 6では、ECSへデプロイする前のWorkerプロセスをローカルで実装した。WorkerはSQSをLong Pollingし、Messageを1件ずつ注入された処理関数へ渡す。処理関数が成功した場合だけDeleteMessageし、処理失敗やDelete失敗ではMessageを削除しない。SIGTERM / SIGINTでは新しい受信を停止し、Long PollingをAbortして処理中Jobの完了を待つ。Shutdown要求後30秒経過しても完了しない場合は削除せず終了し、SQSの再配送に任せる。
 
-Phase 7ではWorkerから独立した`BedrockOcrAnalyzer`を追加し、画像bytesをConverse APIへ渡し、Tool Use応答をZodで検証できるようにした。Phase 8ではS3 `GetObject`、DBのAtomic claim、lease、processing tokenによるfencing、OCR結果のTransaction保存、`COMPLETED`更新、COMMIT後のDeleteMessageを接続した。Phase 9では処理段階別のRetryable/Permanent分類、`FAILED`更新、failure code制約、DLQ Alarm、SNS通知Topicを追加した。ECS Fargateの`stopTimeout=30秒`はPhase 13でTask Definitionへ設定する。
+Phase 7ではWorkerから独立した`BedrockOcrAnalyzer`を追加し、画像bytesをConverse APIへ渡し、Tool Use応答をZodで検証できるようにした。Phase 8ではS3 `GetObject`、DBのAtomic claim、lease、processing tokenによるfencing、OCR結果のTransaction保存、`COMPLETED`更新、COMMIT後のDeleteMessageを接続した。Phase 9では処理段階別のRetryable/Permanent分類、`FAILED`更新、failure code制約、DLQ Alarm、SNS通知Topicを追加した。Phase 10ではClientから集計値を受け取らず、Workerが保存した`COMPLETED`済みtransactionsをPostgreSQLのSUM / COUNT / GROUP BYで集計する月次Analytics APIを追加した。ECS Fargateの`stopTimeout=30秒`はPhase 13でTask Definitionへ設定する。
 
 ## Upload Sequence
 
