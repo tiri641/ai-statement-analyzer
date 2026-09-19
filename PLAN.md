@@ -173,7 +173,7 @@ Unit、Handler、API、CDKテストとPostgreSQL integration testを実行した
 
 Phase 10のPlanは[plans/phase-10.md](plans/phase-10.md)に記録した。
 
-Status: 実装・動作確認完了。Clientから集計値を受け取らず、Phase 8・9のWorkerが保存した`COMPLETED`済みtransactionsをPostgreSQLの半開区間、SUM、COUNT、GROUP BYで集計する`GET /analytics/monthly`を追加した。割合、前月比、返金、0件、初月、前月0円をBackendで安全に整形し、APIの年月ValidationとDB障害の503処理を追加した。専用PostgreSQLテストDBでUnit、API、Database Integrationを含む153件に成功した。
+Status: 実装・動作確認完了。Clientから集計値を受け取らず、Phase 8・9のWorkerが保存した`COMPLETED`済みtransactionsをPostgreSQLの半開区間、SUM、COUNT、GROUP BYで集計する`GET /analytics/monthly`を追加した。割合、前月比、返金、0件、初月、前月0円をBackendで安全に整形し、APIの年月ValidationとDB障害の503処理を追加した。現月・前月の集計は`REPEATABLE READ`の同一Transactionで取得し、Queryの未知キー・重複キーを拒否する。専用PostgreSQLテストDBでUnit、API、Database Integrationを含む155件に成功した。
 
 学習記録は[learning/phase-10.md](learning/phase-10.md)に記録する。
 
