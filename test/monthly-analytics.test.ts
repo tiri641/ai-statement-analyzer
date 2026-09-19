@@ -50,6 +50,29 @@ test("1月は前年12月を前月として扱う", () => {
   });
 });
 
+test("閏年と非閏年の2月は3月1日を終端にする", () => {
+  assert.deepEqual(getMonthlyAnalyticsRanges(2024, 2), {
+    current: {
+      start: "2024-02-01",
+      end: "2024-03-01",
+    },
+    previous: {
+      start: "2024-01-01",
+      end: "2024-02-01",
+    },
+  });
+  assert.deepEqual(getMonthlyAnalyticsRanges(2025, 2), {
+    current: {
+      start: "2025-02-01",
+      end: "2025-03-01",
+    },
+    previous: {
+      start: "2025-01-01",
+      end: "2025-02-01",
+    },
+  });
+});
+
 test("Analyticsは割合と前月比を1桁へ丸める", () => {
   const result = buildMonthlyAnalytics(
     2026,

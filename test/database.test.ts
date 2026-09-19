@@ -26,10 +26,16 @@ test("不正なtargetMonthを拒否する", () => {
 });
 
 const databaseUrl = process.env.DATABASE_URL;
-const databaseTest = databaseUrl ? test : test.skip;
+if (!databaseUrl) {
+  throw new Error(
+    "DATABASE_URL is required to run database integration tests",
+  );
+}
+
+const databaseTest = test;
 const migrationDirectory = path.resolve(process.cwd(), "migrations");
-const pool = databaseUrl ? new Pool({ connectionString: databaseUrl }) : null;
-const repository = pool ? new StatementRepository(pool) : null;
+const pool = new Pool({ connectionString: databaseUrl });
+const repository = new StatementRepository(pool);
 
 const statementId = "00000000-0000-4000-8000-000000000001";
 const secondStatementId = "00000000-0000-4000-8000-000000000002";

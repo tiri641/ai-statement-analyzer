@@ -757,6 +757,8 @@ test("Monthly Analytics APIは不正な年月を400で拒否する", async () =>
     "/analytics/monthly?year=20x6&month=8",
     "/analytics/monthly?year=1999&month=8",
     "/analytics/monthly?year=2101&month=8",
+    "/analytics/monthly?year=2026&month=8&unexpected=value",
+    "/analytics/monthly?year=2026&year=2026&month=8",
   ]) {
     const response = await app.request(path);
 

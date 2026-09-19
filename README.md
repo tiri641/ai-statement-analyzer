@@ -56,7 +56,7 @@ APIはホストのNode.jsで起動し、PostgreSQLだけをDocker Composeで起�
 
 開発中は `npm run dev` も使用できる。DBを停止する場合は `docker compose stop db`、終了する場合は `docker compose down`を使う。`docker compose down -v`はNamed Volumeを削除するため、意図的なデータ削除時以外は使用しない。
 
-Phase 4・5のAPI起動とCDK操作には、ローカルのAWS CLI ProfileまたはSSO認証が必要である。AWS認証情報をFrontend、ソースコード、`.env`へAccess Keyとして保存しない。認証情報がない場合でも、`npm test`、`npm run typecheck`、`npm run build`、`npm run cdk:synth`は実行できる。
+Phase 4・5のAPI起動とCDK操作には、ローカルのAWS CLI ProfileまたはSSO認証が必要である。AWS認証情報をFrontend、ソースコード、`.env`へAccess Keyとして保存しない。認証情報がない場合でも、`npm test`、`npm run typecheck`、`npm run build`、`npm run cdk:synth`は実行できる。`npm test`にはPostgreSQLのDatabase Integration Testが含まれるため、`DATABASE_URL`を設定して専用のテストデータベースへ接続する。CIもPostgreSQLサービスを起動してからテストを実行する。
 
 Phase 2でMigrationと業務テーブル、Phase 3でAPI入力検証と明細API、Phase 4でS3/CDKとPresigned URL、Phase 5でSQS/CDKと解析開始API、Phase 6で常駐WorkerとGraceful Shutdown、Phase 7でBedrock RuntimeのConverseアダプター、Tool Use、Zod Validation、合成PNG、実接続スモーク、Phase 8でS3 GetObject、Atomic claim、lease、fencing、OCR結果保存、COMMIT後ACK、Phase 9でRetryable/Permanent分類、FAILED遷移、DLQ Alarm、SNS通知Topic、Phase 10でPostgreSQLを正とする月次Analyticsを追加した。ECS ServiceとVPC、Heartbeat、AI Insightsはまだ追加していない。
 

@@ -28,6 +28,7 @@ Worker
 - 前月の金額が0円の場合、前月の総額・件数は返し、前月比だけnullにする。
 - 現月にだけ存在するカテゴリ・merchantの前月金額と前月比はnullにする。
 - 集計結果は金額降順、同額の場合は名称昇順で返す。
+- 現月・前月の集計は`REPEATABLE READ`の同一Transactionで取得し、WorkerのCOMPLETED更新途中の混在を防ぐ。
 - DB障害の詳細やSQLエラーをAPIレスポンスへ出さず、503を返す。
 - 新しいmigrationやBedrock呼び出しは追加していない。
 
@@ -50,7 +51,7 @@ npm run cdk:synth
 git diff --check
 ```
 
-`npm test`は153件成功、失敗0件、skip 0件だった。Database Integration Testでは、月初・翌月月初の境界、`COMPLETED`以外の除外、返金を確認した。
+`npm test`は155件成功、失敗0件、skip 0件だった。Database Integration Testでは、月初・翌月月初の境界、`COMPLETED`以外の除外、返金を確認した。Repositoryのテストでは、Analyticsの全クエリが`REPEATABLE READ`の同一Transactionで実行されることを確認した。Database Integration Testは`DATABASE_URL`未設定時に明示的に失敗し、CIでは専用PostgreSQLを必須とする。
 
 ## 理解確認
 

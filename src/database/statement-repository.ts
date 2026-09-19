@@ -500,15 +500,27 @@ export class StatementRepository {
   public async findMonthlyAnalytics(
     ranges: MonthlyAnalyticsRanges,
   ): Promise<MonthlyAnalyticsAggregates> {
-    const [current, previous] = await Promise.all([
-      this.findMonthlyAggregate(ranges.current),
-      this.findMonthlyAggregate(ranges.previous),
-    ]);
+    const client = await this.pool.connect();
 
-    return { current, previous };
+    try {
+      await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ");
+
+      const current = await this.findMonthlyAggregate(client, ranges.current);
+      const previous = await this.findMonthlyAggregate(client, ranges.previous);
+
+      await client.query("COMMIT");
+
+      return { current, previous };
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   private async findMonthlyAggregate(
+    client: PoolClient,
     range: AnalyticsDateRange,
   ): Promise<MonthlyAnalyticsAggregate> {
     const source = `
@@ -521,41 +533,39 @@ export class StatementRepository {
     `;
     const parameters = [range.start, range.end];
 
-    const [overview, categories, merchants] = await Promise.all([
-      this.pool.query<AnalyticsOverviewDatabaseRow>(
-        `
-          SELECT
-            COALESCE(SUM(t.amount), 0)::text AS total_amount,
-            COUNT(*)::text AS transaction_count
-          ${source}
-        `,
-        parameters,
-      ),
-      this.pool.query<AnalyticsBucketDatabaseRow>(
-        `
-          SELECT
-            t.category AS name,
-            COALESCE(SUM(t.amount), 0)::text AS amount,
-            COUNT(*)::text AS count
-          ${source}
-          GROUP BY t.category
-          ORDER BY SUM(t.amount) DESC, t.category ASC
-        `,
-        parameters,
-      ),
-      this.pool.query<AnalyticsBucketDatabaseRow>(
-        `
-          SELECT
-            t.merchant_name AS name,
-            COALESCE(SUM(t.amount), 0)::text AS amount,
-            COUNT(*)::text AS count
-          ${source}
-          GROUP BY t.merchant_name
-          ORDER BY SUM(t.amount) DESC, t.merchant_name ASC
-        `,
-        parameters,
-      ),
-    ]);
+    const overview = await client.query<AnalyticsOverviewDatabaseRow>(
+      `
+        SELECT
+          COALESCE(SUM(t.amount), 0)::text AS total_amount,
+          COUNT(*)::text AS transaction_count
+        ${source}
+      `,
+      parameters,
+    );
+    const categories = await client.query<AnalyticsBucketDatabaseRow>(
+      `
+        SELECT
+          t.category AS name,
+          COALESCE(SUM(t.amount), 0)::text AS amount,
+          COUNT(*)::text AS count
+        ${source}
+        GROUP BY t.category
+        ORDER BY SUM(t.amount) DESC, t.category ASC
+      `,
+      parameters,
+    );
+    const merchants = await client.query<AnalyticsBucketDatabaseRow>(
+      `
+        SELECT
+          t.merchant_name AS name,
+          COALESCE(SUM(t.amount), 0)::text AS amount,
+          COUNT(*)::text AS count
+        ${source}
+        GROUP BY t.merchant_name
+        ORDER BY SUM(t.amount) DESC, t.merchant_name ASC
+      `,
+      parameters,
+    );
     const overviewRow = getFirstRow(
       overview,
       "monthly analytics overviewがありません",

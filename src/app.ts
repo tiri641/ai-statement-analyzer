@@ -203,10 +203,16 @@ export function createApp({
   });
 
   app.get("/analytics/monthly", async (context) => {
-    const parsedQuery = monthlyAnalyticsQuerySchema.safeParse({
-      year: context.req.query("year"),
-      month: context.req.query("month"),
-    });
+    const queryValues = context.req.queries();
+    const hasDuplicateQueryParameter = Object.values(queryValues).some(
+      (values) => values.length !== 1,
+    );
+    const query = hasDuplicateQueryParameter
+      ? null
+      : Object.fromEntries(
+          Object.entries(queryValues).map(([key, values]) => [key, values[0]]),
+        );
+    const parsedQuery = monthlyAnalyticsQuerySchema.safeParse(query);
 
     if (!parsedQuery.success) {
       return errorResponse(

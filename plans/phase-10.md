@@ -38,6 +38,7 @@ Request Body、画像、取引配列、合計金額は受け取らない。`GET 
 - 前月に取引があっても合計額が0円の場合、前月の総額・件数は返し、前月比だけ`null`にする。
 - 現月に存在するカテゴリ・merchantに前月データがない場合、`previousAmount`と前月比は`null`にする。
 - 集計行は金額降順、同額の場合は名称昇順で安定させる。
+- 現月・前月の総額、カテゴリ、merchantは`REPEATABLE READ`の同一Transaction内で取得し、集計結果のスナップショットをそろえる。
 
 ## 実装対象
 
@@ -54,7 +55,9 @@ Request Body、画像、取引配列、合計金額は受け取らない。`GET 
    - 月境界、年またぎ、閏年の月範囲をテストする。
    - 純額、件数、カテゴリ、merchant、返金、0件、初月、前月0円、0除算をテストする。
    - `COMPLETED`以外のstatementを除外するDatabase Integration Testを追加する。
+   - Analytics Repositoryが`REPEATABLE READ`の同一Clientを使うことをテストする。
    - APIの正常系、年月Validation、DB障害503をテストする。
+   - 未知のQuery Parameterと同名Parameterの重複を400で拒否する。
 2. Green
    - 純粋な月範囲・割合・前月比計算を実装する。
    - Repository SQL、API Route、依存性注入、server wiringを実装する。
@@ -72,4 +75,5 @@ Integration Testは専用テストDBへデータを登録して実行し、Analy
 - 返金を含む純額集計が確認できる。
 - 0件、初月、前月0円、月境界がテストされる。
 - `COMPLETED`以外のstatementの取引が集計されない。
+- 集計クエリは同一`REPEATABLE READ`スナップショットから返る。
 - `npm test`、`npm run typecheck`、`npm run typecheck:infra`、`npm run build`、`npm run cdk:synth`、`git diff --check`が成功する。
