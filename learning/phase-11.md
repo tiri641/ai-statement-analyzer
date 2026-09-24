@@ -31,7 +31,7 @@ Insights typeは`CATEGORY_INCREASE`、`MERCHANT_INCREASE`、`NOTABLE_SPENDING`�
 
 Bedrockへは合計、件数、カテゴリ、merchant、前月比などの確定済み集計値だけを渡し、画像、全取引明細、`merchantRaw`、DB credentials、秘密情報は渡さない。AI出力はそのまま公開せず、Tool schema、Zod、Analytics参照検証を通過した結果だけを返す。Insightsは金融助言や自動決済ではなく、支出データの説明である。
 
-cache hitではBedrockを呼ばないため、同じ集計結果への再生成コストとレイテンシーを削減できる。さらに、同時cache missでは対象月・モデル・prompt version単位のadvisory lockを使い、後続リクエストがlock取得後にcacheを再確認するため、同じ条件のBedrock生成を1回に抑える。Bedrock呼び出し中はtransactionを保持するため、低頻度の同期API向けの設計であり、高スループット化や非同期Queue化は対象外とした。
+cache hitではBedrockを呼ばないため、同じ集計結果への再生成コストとレイテンシーを削減できる。さらに、同時cache missでは対象月・モデル・prompt version単位のadvisory lockを使い、後続リクエストがlock取得後にcacheを再確認するため、同じ条件のBedrock生成を1回に抑える。Bedrock生成には30秒のAbortSignal、lock待機には35秒の個別query timeoutを設定している。Bedrock呼び出し中はtransactionを保持するため、低頻度の同期API向けの設計であり、高スループット化や非同期Queue化は対象外とした。
 
 ## 動作確認
 
@@ -44,4 +44,4 @@ npm run cdk:synth
 git diff --check
 ```
 
-結果は、PostgreSQL統合を含む178件成功、失敗0件、skip 0件、型チェック成功、infra typecheck成功、build成功、CDK synth成功、diff check成功だった。実AWS Bedrock呼び出しは行っていない。同時cache missの統合テストでは、2つの同時リクエストに対するBedrock生成が1回だけになることを確認した。
+結果は、PostgreSQL統合を含む180件成功、失敗0件、skip 0件、型チェック成功、infra typecheck成功、build成功、CDK synth成功、diff check成功だった。実AWS Bedrock呼び出しは行っていない。同時cache missの統合テストでは、2つの同時リクエストに対するBedrock生成が1回だけになることを確認した。

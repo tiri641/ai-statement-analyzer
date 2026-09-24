@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Pool, PoolClient } from "pg";
 import {
+  MONTHLY_INSIGHTS_LOCK_WAIT_TIMEOUT_MILLIS,
   StatementRepository,
   type MonthlyInsightsCacheLookup,
   type SaveMonthlyInsightsInput,
@@ -34,10 +35,27 @@ class FakePool {
   public readonly queries: Array<{
     text: string;
     parameters: unknown[] | undefined;
+    queryTimeout: number | undefined;
   }> = [];
+  public releaseCount = 0;
+  public failRollback = false;
 
-  public async query<T>(text: string, parameters?: unknown[]): Promise<{ rows: T[] }> {
-    this.queries.push({ text: text.replace(/\s+/g, " ").trim(), parameters });
+  public async query<T>(
+    query: string | { text: string; values?: unknown[]; query_timeout?: number },
+    parameters?: unknown[],
+  ): Promise<{ rows: T[] }> {
+    const text = typeof query === "string" ? query : query.text;
+    const queryParameters = typeof query === "string" ? parameters : query.values;
+    const queryTimeout = typeof query === "string" ? undefined : query.query_timeout;
+    this.queries.push({
+      text: text.replace(/\s+/g, " ").trim(),
+      parameters: queryParameters,
+      queryTimeout,
+    });
+
+    if (text === "ROLLBACK" && this.failRollback) {
+      throw new Error("rollback failed");
+    }
 
     if (text.includes("FROM monthly_insights")) {
       return {
@@ -60,7 +78,9 @@ class FakePool {
   public async connect(): Promise<PoolClient> {
     return {
       query: this.query.bind(this),
-      release: () => undefined,
+      release: () => {
+        this.releaseCount += 1;
+      },
     } as unknown as PoolClient;
   }
 }
@@ -114,5 +134,41 @@ test("monthly_insights生成ロックはトランザクション内で取得し�
 
   assert.match(pool.queries[0]?.text ?? "", /^BEGIN$/);
   assert.match(pool.queries[1]?.text ?? "", /pg_advisory_xact_lock/);
+  assert.equal(
+    pool.queries[1]?.queryTimeout,
+    MONTHLY_INSIGHTS_LOCK_WAIT_TIMEOUT_MILLIS,
+  );
   assert.match(pool.queries[2]?.text ?? "", /^COMMIT$/);
+  assert.equal(pool.releaseCount, 1);
+});
+
+test("monthly_insights生成失敗時はrollbackして接続を解放する", async () => {
+  const pool = new FakePool();
+  const repository = new StatementRepository(pool as unknown as Pool);
+  const originalError = new Error("generation failed");
+
+  await assert.rejects(
+    repository.withMonthlyInsightsGenerationLock("2026-08-01:model:v1", async () => {
+      throw originalError;
+    }),
+    (error) => error === originalError,
+  );
+
+  assert.match(pool.queries[2]?.text ?? "", /^ROLLBACK$/);
+  assert.equal(pool.releaseCount, 1);
+});
+
+test("monthly_insightsのrollback失敗は元エラーと合わせて通知する", async () => {
+  const pool = new FakePool();
+  pool.failRollback = true;
+  const repository = new StatementRepository(pool as unknown as Pool);
+
+  await assert.rejects(
+    repository.withMonthlyInsightsGenerationLock("2026-08-01:model:v1", async () => {
+      throw new Error("generation failed");
+    }),
+    AggregateError,
+  );
+
+  assert.equal(pool.releaseCount, 1);
 });

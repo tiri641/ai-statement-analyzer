@@ -69,7 +69,7 @@ BedrockのTool Use入力をZodで検証し、さらにAnalyticsとの参照整�
 2. `REPEATABLE READ`で取得済みの月次Analyticsからcompact DTOを作る。
 3. cacheを検索する。
 4. 条件一致した検証済みcacheは`cached: true`で返し、Bedrockを呼ばない。
-5. cache miss時は対象月・モデル・prompt version単位のadvisory lockを取得し、cacheを再確認する。
+5. cache miss時は対象月・モデル・prompt version単位のadvisory lockを最大35秒待って取得し、cacheを再確認する。Bedrock生成は30秒のAbortSignalで上限を設ける。
 6. lock取得後もcacheがなければpromptを作り、Bedrockへ送る。
 7. 応答をZodとポリシーで検証し、成功した結果だけcacheへ保存する。
 8. 新規生成結果は`cached: false`で返し、後続の待機リクエストは`cached: true`で返す。

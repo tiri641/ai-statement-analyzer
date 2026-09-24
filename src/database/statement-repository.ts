@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Pool, PoolClient } from "pg";
+import type { Pool, PoolClient, QueryConfig } from "pg";
 import {
   ProcessingClaimLostError,
   UniqueConstraintError,
@@ -36,6 +36,7 @@ export const STATEMENT_FAILURE_CODES = [
 export type StatementFailureCode = (typeof STATEMENT_FAILURE_CODES)[number];
 
 export const DEFAULT_PROCESSING_LEASE_SECONDS = 10 * 60;
+export const MONTHLY_INSIGHTS_LOCK_WAIT_TIMEOUT_MILLIS = 35_000;
 
 export interface CreateStatementInput {
   id?: string;
@@ -731,9 +732,12 @@ export class StatementRepository {
 
     try {
       await client.query("BEGIN");
-      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
-        lockKey,
-      ]);
+      const lockQuery = {
+        text: "SELECT pg_advisory_xact_lock(hashtext($1))",
+        values: [lockKey],
+        query_timeout: MONTHLY_INSIGHTS_LOCK_WAIT_TIMEOUT_MILLIS,
+      } as QueryConfig & { query_timeout: number };
+      await client.query(lockQuery);
 
       // Keep this transaction open while Bedrock runs so the lock covers the
       // complete cache miss check, generation, and save sequence.
@@ -747,8 +751,7 @@ export class StatementRepository {
       await client.query("COMMIT");
       return result;
     } catch (error) {
-      await client.query("ROLLBACK").catch(() => undefined);
-      throw error;
+      return rollbackTransaction(client, error);
     } finally {
       client.release();
     }

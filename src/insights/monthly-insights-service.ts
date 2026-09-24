@@ -11,6 +11,7 @@ import type {
 } from "../database/statement-repository.js";
 import type {
   BedrockInsightsAnalyzer,
+  InsightsAnalyzeOptions,
   InsightsAnalysisResult,
 } from "../ai/bedrock-insights.js";
 import {
@@ -22,6 +23,8 @@ import {
   type InsightsDocument,
   type Insight,
 } from "./monthly-insights.js";
+
+export const MONTHLY_INSIGHTS_GENERATION_TIMEOUT_MILLIS = 30_000;
 
 export interface MonthlyInsightsAnalyticsStore {
   findMonthlyAnalytics(
@@ -36,6 +39,7 @@ export interface MonthlyInsightsCache
 export interface MonthlyInsightsAnalyzer {
   analyze(
     input: CompactInsightsInput,
+    options?: InsightsAnalyzeOptions,
   ): Promise<InsightsAnalysisResult>;
 }
 
@@ -121,7 +125,9 @@ export class MonthlyInsightsService {
           return lockedCachedResponse;
         }
 
-        const generated = await this.analyzer.analyze(input);
+        const generated = await this.analyzer.analyze(input, {
+          signal: AbortSignal.timeout(MONTHLY_INSIGHTS_GENERATION_TIMEOUT_MILLIS),
+        });
         const validated = parseAndValidateInsights(
           { insights: generated.insights },
           input,
