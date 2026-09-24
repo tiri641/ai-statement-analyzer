@@ -299,10 +299,12 @@ function isUniqueViolation(error: unknown): boolean {
 async function rollbackTransaction(
   client: PoolClient,
   originalError: unknown,
+  onRollbackFailure?: (rollbackError: unknown) => void,
 ): Promise<never> {
   try {
     await client.query("ROLLBACK");
   } catch (rollbackError) {
+    onRollbackFailure?.(rollbackError);
     throw new AggregateError(
       [originalError, rollbackError],
       "DB TransactionとRollbackの両方に失敗しました",
@@ -729,6 +731,7 @@ export class StatementRepository {
     callback: (cache: MonthlyInsightsCacheSession) => Promise<T>,
   ): Promise<T> {
     const client = await this.pool.connect();
+    let clientReleased = false;
 
     try {
       await client.query("BEGIN");
@@ -751,9 +754,18 @@ export class StatementRepository {
       await client.query("COMMIT");
       return result;
     } catch (error) {
-      return rollbackTransaction(client, error);
+      return await rollbackTransaction(client, error, (rollbackError) => {
+        clientReleased = true;
+        client.release(
+          rollbackError instanceof Error
+            ? rollbackError
+            : new Error(String(rollbackError)),
+        );
+      });
     } finally {
-      client.release();
+      if (!clientReleased) {
+        client.release();
+      }
     }
   }
 

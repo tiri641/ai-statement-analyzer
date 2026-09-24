@@ -38,6 +38,7 @@ class FakePool {
     queryTimeout: number | undefined;
   }> = [];
   public releaseCount = 0;
+  public releaseErrors: Error[] = [];
   public failRollback = false;
 
   public async query<T>(
@@ -78,8 +79,11 @@ class FakePool {
   public async connect(): Promise<PoolClient> {
     return {
       query: this.query.bind(this),
-      release: () => {
+      release: (error?: Error) => {
         this.releaseCount += 1;
+        if (error) {
+          this.releaseErrors.push(error);
+        }
       },
     } as unknown as PoolClient;
   }
@@ -171,4 +175,5 @@ test("monthly_insightsのrollback失敗は元エラーと合わせて通知す�
   );
 
   assert.equal(pool.releaseCount, 1);
+  assert.equal(pool.releaseErrors.length, 1);
 });
