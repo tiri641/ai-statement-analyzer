@@ -98,6 +98,20 @@ export interface SaveMonthlyInsightsInput extends MonthlyInsightsCacheLookup {
   generatedAt: Date;
 }
 
+export interface MonthlyInsightsCacheSession {
+  findMonthlyInsights(
+    lookup: MonthlyInsightsCacheLookup,
+  ): Promise<MonthlyInsightsCacheRecord | null>;
+  saveMonthlyInsights(input: SaveMonthlyInsightsInput): Promise<void>;
+}
+
+export interface MonthlyInsightsCacheLockProvider {
+  withMonthlyInsightsGenerationLock<T>(
+    lockKey: string,
+    callback: (cache: MonthlyInsightsCacheSession) => Promise<T>,
+  ): Promise<T>;
+}
+
 export interface ProcessingClaim {
   statementId: string;
   s3Key: string;
@@ -615,7 +629,20 @@ export class StatementRepository {
   public async findMonthlyInsights(
     lookup: MonthlyInsightsCacheLookup,
   ): Promise<MonthlyInsightsCacheRecord | null> {
-    const result = await this.pool.query<MonthlyInsightsDatabaseRow>(
+    const client = await this.pool.connect();
+
+    try {
+      return await this.findMonthlyInsightsWithClient(client, lookup);
+    } finally {
+      client.release();
+    }
+  }
+
+  private async findMonthlyInsightsWithClient(
+    client: PoolClient,
+    lookup: MonthlyInsightsCacheLookup,
+  ): Promise<MonthlyInsightsCacheRecord | null> {
+    const result = await client.query<MonthlyInsightsDatabaseRow>(
       `
         SELECT
           target_month::text,
@@ -654,7 +681,20 @@ export class StatementRepository {
   public async saveMonthlyInsights(
     input: SaveMonthlyInsightsInput,
   ): Promise<void> {
-    await this.pool.query(
+    const client = await this.pool.connect();
+
+    try {
+      await this.saveMonthlyInsightsWithClient(client, input);
+    } finally {
+      client.release();
+    }
+  }
+
+  private async saveMonthlyInsightsWithClient(
+    client: PoolClient,
+    input: SaveMonthlyInsightsInput,
+  ): Promise<void> {
+    await client.query(
       `
         INSERT INTO monthly_insights (
           target_month,
@@ -681,6 +721,37 @@ export class StatementRepository {
         input.generatedAt,
       ],
     );
+  }
+
+  public async withMonthlyInsightsGenerationLock<T>(
+    lockKey: string,
+    callback: (cache: MonthlyInsightsCacheSession) => Promise<T>,
+  ): Promise<T> {
+    const client = await this.pool.connect();
+
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+        lockKey,
+      ]);
+
+      // Keep this transaction open while Bedrock runs so the lock covers the
+      // complete cache miss check, generation, and save sequence.
+      const result = await callback({
+        findMonthlyInsights: (lookup) =>
+          this.findMonthlyInsightsWithClient(client, lookup),
+        saveMonthlyInsights: (input) =>
+          this.saveMonthlyInsightsWithClient(client, input),
+      });
+
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   public async saveTransactionsAndComplete(

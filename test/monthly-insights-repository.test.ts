@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import {
   StatementRepository,
   type MonthlyInsightsCacheLookup,
@@ -56,6 +56,13 @@ class FakePool {
 
     return { rows: [] as T[] };
   }
+
+  public async connect(): Promise<PoolClient> {
+    return {
+      query: this.query.bind(this),
+      release: () => undefined,
+    } as unknown as PoolClient;
+  }
 }
 
 test("monthly_insights cacheは年月とversion条件が一致する行を取得する", async () => {
@@ -95,4 +102,17 @@ test("monthly_insights cacheは対象月をキーに検証済み結果をupsert�
     JSON.stringify(saveInput.insights),
     saveInput.generatedAt,
   ]);
+});
+
+test("monthly_insights生成ロックはトランザクション内で取得して解放する", async () => {
+  const pool = new FakePool();
+  const repository = new StatementRepository(pool as unknown as Pool);
+
+  await repository.withMonthlyInsightsGenerationLock("2026-08-01:model:v1", async () =>
+    "done",
+  );
+
+  assert.match(pool.queries[0]?.text ?? "", /^BEGIN$/);
+  assert.match(pool.queries[1]?.text ?? "", /pg_advisory_xact_lock/);
+  assert.match(pool.queries[2]?.text ?? "", /^COMMIT$/);
 });

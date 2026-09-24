@@ -5,8 +5,9 @@ import {
 } from "../analytics/monthly-analytics.js";
 import type {
   MonthlyInsightsCacheLookup,
+  MonthlyInsightsCacheLockProvider,
+  MonthlyInsightsCacheSession,
   MonthlyInsightsCacheRecord,
-  SaveMonthlyInsightsInput,
 } from "../database/statement-repository.js";
 import type {
   BedrockInsightsAnalyzer,
@@ -28,12 +29,9 @@ export interface MonthlyInsightsAnalyticsStore {
   ): Promise<MonthlyAnalyticsAggregates>;
 }
 
-export interface MonthlyInsightsCache {
-  findMonthlyInsights(
-    lookup: MonthlyInsightsCacheLookup,
-  ): Promise<MonthlyInsightsCacheRecord | null>;
-  saveMonthlyInsights(input: SaveMonthlyInsightsInput): Promise<void>;
-}
+export interface MonthlyInsightsCache
+  extends MonthlyInsightsCacheSession,
+    MonthlyInsightsCacheLockProvider {}
 
 export interface MonthlyInsightsAnalyzer {
   analyze(
@@ -94,33 +92,73 @@ export class MonthlyInsightsService {
       modelId: this.modelId,
       promptVersion: this.promptVersion,
     };
-    const cached = await this.cache.findMonthlyInsights(lookup);
+    const cachedResponse = this.getCachedResponse(
+      year,
+      month,
+      input,
+      await this.cache.findMonthlyInsights(lookup),
+    );
 
-    if (cached) {
-      try {
-        const validated = parseAndValidateInsights(cached.insights, input);
-        return this.toResponse(year, month, validated, cached.generatedAt, true);
-      } catch (error) {
-        if (!(error instanceof InvalidInsightsResponseError)) {
-          throw error;
-        }
-      }
+    if (cachedResponse) {
+      return cachedResponse;
     }
 
-    const generated = await this.analyzer.analyze(input);
-    const validated = parseAndValidateInsights(
-      { insights: generated.insights },
-      input,
+    const lockKey = [lookup.targetMonth, lookup.modelId, lookup.promptVersion].join(
+      ":",
     );
-    const generatedAt = this.now();
 
-    await this.cache.saveMonthlyInsights({
-      ...lookup,
-      insights: validated,
-      generatedAt,
-    });
+    return this.cache.withMonthlyInsightsGenerationLock(
+      lockKey,
+      async (lockedCache) => {
+        const lockedCachedResponse = this.getCachedResponse(
+          year,
+          month,
+          input,
+          await lockedCache.findMonthlyInsights(lookup),
+        );
 
-    return this.toResponse(year, month, validated, generatedAt, false);
+        if (lockedCachedResponse) {
+          return lockedCachedResponse;
+        }
+
+        const generated = await this.analyzer.analyze(input);
+        const validated = parseAndValidateInsights(
+          { insights: generated.insights },
+          input,
+        );
+        const generatedAt = this.now();
+
+        await lockedCache.saveMonthlyInsights({
+          ...lookup,
+          insights: validated,
+          generatedAt,
+        });
+
+        return this.toResponse(year, month, validated, generatedAt, false);
+      },
+    );
+  }
+
+  private getCachedResponse(
+    year: number,
+    month: number,
+    input: CompactInsightsInput,
+    cached: MonthlyInsightsCacheRecord | null,
+  ): MonthlyInsightsResponse | null {
+    if (!cached) {
+      return null;
+    }
+
+    try {
+      const validated = parseAndValidateInsights(cached.insights, input);
+      return this.toResponse(year, month, validated, cached.generatedAt, true);
+    } catch (error) {
+      if (!(error instanceof InvalidInsightsResponseError)) {
+        throw error;
+      }
+
+      return null;
+    }
   }
 
   private toResponse(

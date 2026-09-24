@@ -57,6 +57,13 @@ class FakeCache {
   public async saveMonthlyInsights(input: SaveMonthlyInsightsInput): Promise<void> {
     this.saved.push(input);
   }
+
+  public async withMonthlyInsightsGenerationLock<T>(
+    _lockKey: string,
+    callback: (cache: FakeCache) => Promise<T>,
+  ): Promise<T> {
+    return callback(this);
+  }
 }
 
 function createService(options: {

@@ -18,12 +18,12 @@ Phase 10のPostgreSQL月次Analyticsをcompact DTOへ変換し、Bedrockで自�
 - 実装したAPI、schema、migration、cache動作
 - TDD、PostgreSQL integration、typecheck、build、synthの実行結果
 - Bedrock failure、invalid output、前月なしの確認結果
-- Security、Cost、既知の重複生成リスク
+- Security、Cost、同時cache missの重複生成防止
 - Insightsが金融助言ではなく支出データの説明であること
 
 ## 実装結果
 
-`GET /analytics/monthly/insights?year=YYYY&month=M`を追加した。APIはPhase 10の月次Analyticsをcompact DTOへ変換し、SHA-256 fingerprint、Bedrock model ID、prompt versionが一致する`monthly_insights` cacheだけを再利用する。対象月ごとに1行を保持し、cache missではBedrock Tool Useで新しいInsightsを生成して、ZodとAnalytics参照検証に成功した結果だけをupsertする。
+`GET /analytics/monthly/insights?year=YYYY&month=M`を追加した。APIはPhase 10の月次Analyticsをcompact DTOへ変換し、SHA-256 fingerprint、Bedrock model ID、prompt versionが一致する`monthly_insights` cacheだけを再利用する。対象月ごとに1行を保持し、cache missではBedrock Tool Useで新しいInsightsを生成して、ZodとAnalytics参照検証に成功した結果だけをupsertする。同一対象月・モデル・prompt versionのcache missは、PostgreSQL transaction-level advisory lockの中でcacheを再確認してから生成する。
 
 Insights typeは`CATEGORY_INCREASE`、`MERCHANT_INCREASE`、`NOTABLE_SPENDING`に限定した。前月がない場合は増加系typeを拒否し、Bedrock・cache・Analytics障害や不正応答は`503 INSIGHTS_UNAVAILABLE`とする。数値Analytics APIはInsights障害から分離した。
 
@@ -31,7 +31,7 @@ Insights typeは`CATEGORY_INCREASE`、`MERCHANT_INCREASE`、`NOTABLE_SPENDING`�
 
 Bedrockへは合計、件数、カテゴリ、merchant、前月比などの確定済み集計値だけを渡し、画像、全取引明細、`merchantRaw`、DB credentials、秘密情報は渡さない。AI出力はそのまま公開せず、Tool schema、Zod、Analytics参照検証を通過した結果だけを返す。Insightsは金融助言や自動決済ではなく、支出データの説明である。
 
-cache hitではBedrockを呼ばないため、同じ集計結果への再生成コストとレイテンシーを削減できる。複数API taskの同時cache missでは重複Bedrock生成が起こり得るが、対象月upsertの整合性は保つ。分散ロックは後続Phaseの検討事項とした。
+cache hitではBedrockを呼ばないため、同じ集計結果への再生成コストとレイテンシーを削減できる。さらに、同時cache missでは対象月・モデル・prompt version単位のadvisory lockを使い、後続リクエストがlock取得後にcacheを再確認するため、同じ条件のBedrock生成を1回に抑える。Bedrock呼び出し中はtransactionを保持するため、低頻度の同期API向けの設計であり、高スループット化や非同期Queue化は対象外とした。
 
 ## 動作確認
 
@@ -44,4 +44,4 @@ npm run cdk:synth
 git diff --check
 ```
 
-結果は、PostgreSQL統合を含む175件成功、失敗0件、skip 0件、型チェック成功、infra typecheck成功、build成功、CDK synth成功、diff check成功だった。実AWS Bedrock呼び出しは行っていない。
+結果は、PostgreSQL統合を含む178件成功、失敗0件、skip 0件、型チェック成功、infra typecheck成功、build成功、CDK synth成功、diff check成功だった。実AWS Bedrock呼び出しは行っていない。同時cache missの統合テストでは、2つの同時リクエストに対するBedrock生成が1回だけになることを確認した。

@@ -22,12 +22,13 @@ PostgreSQLで確定した集計値を数値の正本とし、Bedrockは解釈と
 - `monthly_insights` migration、取得、対象月単位のupsert
 - cache hit / missを扱う同期GET API
 - Bedrock failure、invalid output、前月なしの安全な挙動
+- PostgreSQL advisory lockによる同時cache missの重複生成防止
 
 対象外:
 
 - Frontendと認証、`owner_id`絞り込み
 - InsightsのSQS非同期化
-- 分散ロックと重複生成の完全排除
+- 複数リージョン・複数DBをまたぐ分散ロック
 - ECS、RDS、VPCなどのProduction deploy
 - Observability基盤の拡張
 
@@ -46,7 +47,7 @@ generated_at       timestamptz NOT NULL
 
 `analytics_version`は`monthly-analytics-v1:<SHA-256>`とする。SHA-256の入力は順序を正規化したcompact Analytics DTOであり、新しい取引や集計値の変更でcache missになる。集計ルールやDTO構造を変更した場合は`monthly-analytics-v2`へ上げる。
 
-cacheは対象月、Analytics version、Bedrock model、prompt versionがすべて一致した場合だけ返す。不一致時はBedrock生成後に同じ対象月の行をupsertする。古いInsightsをfallbackとして返さない。
+cacheは対象月、Analytics version、Bedrock model、prompt versionがすべて一致した場合だけ返す。不一致時はBedrock生成後に同じ対象月の行をupsertする。古いInsightsをfallbackとして返さない。同一対象月・モデル・prompt versionのcache missは、PostgreSQLのtransaction-level advisory lockを取得してからcacheを再確認するため、複数API taskが同時に来てもBedrock生成を1回に直列化する。
 
 ## AI入力・出力
 
@@ -68,9 +69,10 @@ BedrockのTool Use入力をZodで検証し、さらにAnalyticsとの参照整�
 2. `REPEATABLE READ`で取得済みの月次Analyticsからcompact DTOを作る。
 3. cacheを検索する。
 4. 条件一致した検証済みcacheは`cached: true`で返し、Bedrockを呼ばない。
-5. cache miss時はpromptを作り、Bedrockへ送る。
-6. 応答をZodとポリシーで検証し、成功した結果だけcacheへ保存する。
-7. 新規生成結果は`cached: false`で返す。
+5. cache miss時は対象月・モデル・prompt version単位のadvisory lockを取得し、cacheを再確認する。
+6. lock取得後もcacheがなければpromptを作り、Bedrockへ送る。
+7. 応答をZodとポリシーで検証し、成功した結果だけcacheへ保存する。
+8. 新規生成結果は`cached: false`で返し、後続の待機リクエストは`cached: true`で返す。
 
 Bedrock、cache、Analyticsの障害やAI応答不正は`503 INSIGHTS_UNAVAILABLE`とする。数値Analytics APIはInsights障害の影響を受けない。
 
@@ -88,6 +90,7 @@ Red → Green → Refactorで次を確認する。
 - Bedrock Tool Useの強制選択、画像なし入力、invalid response、AbortSignalを確認する
 - cache hitでBedrockを呼ばない
 - cache miss、fingerprint/model/prompt version不一致で生成・upsertする
+- 同時cache missをadvisory lockで直列化し、Bedrock生成が1回になることを確認する
 - PostgreSQL migration、cache取得、upsert、制約を確認する
 - APIの正常系、400、503、秘密情報非漏洩を確認する
 
