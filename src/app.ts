@@ -10,6 +10,7 @@ import type {
   MonthlyAnalyticsAggregates,
   MonthlyAnalyticsRanges,
 } from "./analytics/monthly-analytics.js";
+import type { MonthlyInsightsResponse } from "./insights/monthly-insights-service.js";
 import {
   MAX_REQUEST_BODY_BYTES,
   MAX_UPLOAD_BYTES,
@@ -44,10 +45,15 @@ export interface AnalyticsStore {
   ): Promise<MonthlyAnalyticsAggregates>;
 }
 
+export interface MonthlyInsightsProvider {
+  getMonthlyInsights(year: number, month: number): Promise<MonthlyInsightsResponse>;
+}
+
 export interface AppDependencies {
   database: HealthDatabase;
   statements: StatementStore;
   analytics: AnalyticsStore;
+  monthlyInsights?: MonthlyInsightsProvider;
   objectStore: StatementObjectStore;
   jobQueue: AnalyzeJobQueue;
   presignedUrlExpiresSeconds?: number;
@@ -159,10 +165,20 @@ function logQueueFailure(event: string) {
   );
 }
 
+function logInsightsFailure(event: string) {
+  console.error(
+    JSON.stringify({
+      event,
+      errorCode: "INSIGHTS_UNAVAILABLE",
+    }),
+  );
+}
+
 export function createApp({
   database,
   statements,
   analytics,
+  monthlyInsights,
   objectStore,
   jobQueue,
   presignedUrlExpiresSeconds = 300,
@@ -238,6 +254,53 @@ export function createApp({
         503,
         "DEPENDENCY_UNAVAILABLE",
         "依存サービスを利用できません。",
+      );
+    }
+  });
+
+  app.get("/analytics/monthly/insights", async (context) => {
+    const queryValues = context.req.queries();
+    const hasDuplicateQueryParameter = Object.values(queryValues).some(
+      (values) => values.length !== 1,
+    );
+    const query = hasDuplicateQueryParameter
+      ? null
+      : Object.fromEntries(
+          Object.entries(queryValues).map(([key, values]) => [key, values[0]]),
+        );
+    const parsedQuery = monthlyAnalyticsQuerySchema.safeParse(query);
+
+    if (!parsedQuery.success) {
+      return errorResponse(
+        context,
+        400,
+        "INVALID_REQUEST",
+        "入力内容が不正です。",
+      );
+    }
+
+    if (!monthlyInsights) {
+      logInsightsFailure("monthly_insights_config_missing");
+      return errorResponse(
+        context,
+        503,
+        "INSIGHTS_UNAVAILABLE",
+        "支出Insightsを利用できません。",
+      );
+    }
+
+    try {
+      const { year, month } = parsedQuery.data;
+      return context.json(
+        await monthlyInsights.getMonthlyInsights(year, month),
+      );
+    } catch {
+      logInsightsFailure("monthly_insights_failed");
+      return errorResponse(
+        context,
+        503,
+        "INSIGHTS_UNAVAILABLE",
+        "支出Insightsを利用できません。",
       );
     }
   });

@@ -187,6 +187,10 @@ Status: 実装・動作確認完了。Clientから集計値を受け取らず、
 4. monthly_insights cacheを追加する。
 5. invalid output / no previous month / Bedrock failureをテストする。
 
+Phase 11のPlanは[plans/phase-11.md](plans/phase-11.md)に記録した。
+
+Status: 実装・動作確認完了。`GET /analytics/monthly/insights`、compact Analytics DTO、Analytics fingerprint、Bedrock Tool Use、Zod Validation、`monthly_insights` PostgreSQL cacheを追加した。PostgreSQL統合を含む175件のテスト、typecheck、infra typecheck、build、cdk synth、diff checkに成功した。
+
 ### Phase 12: Observability
 
 1. JSON loggerとrequestIdを追加する。

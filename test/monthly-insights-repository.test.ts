@@ -1,0 +1,98 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import type { Pool } from "pg";
+import {
+  StatementRepository,
+  type MonthlyInsightsCacheLookup,
+  type SaveMonthlyInsightsInput,
+} from "../src/database/statement-repository.ts";
+
+const lookup: MonthlyInsightsCacheLookup = {
+  targetMonth: "2026-08-01",
+  analyticsVersion: "monthly-analytics-v1:hash",
+  modelId: "insights-model",
+  promptVersion: "v1",
+};
+
+const saveInput: SaveMonthlyInsightsInput = {
+  ...lookup,
+  insights: {
+    insights: [
+      {
+        type: "NOTABLE_SPENDING",
+        severity: "info",
+        title: "注目支出",
+        description: "食費の支出が目立ちます。",
+        category: "食費",
+      },
+    ],
+  },
+  generatedAt: new Date("2026-09-01T03:00:00.000Z"),
+};
+
+class FakePool {
+  public readonly queries: Array<{
+    text: string;
+    parameters: unknown[] | undefined;
+  }> = [];
+
+  public async query<T>(text: string, parameters?: unknown[]): Promise<{ rows: T[] }> {
+    this.queries.push({ text: text.replace(/\s+/g, " ").trim(), parameters });
+
+    if (text.includes("FROM monthly_insights")) {
+      return {
+        rows: [
+          {
+            target_month: "2026-08-01",
+            analytics_version: lookup.analyticsVersion,
+            model_id: lookup.modelId,
+            prompt_version: lookup.promptVersion,
+            insights: saveInput.insights,
+            generated_at: saveInput.generatedAt,
+          },
+        ] as T[],
+      };
+    }
+
+    return { rows: [] as T[] };
+  }
+}
+
+test("monthly_insights cacheは年月とversion条件が一致する行を取得する", async () => {
+  const pool = new FakePool();
+  const repository = new StatementRepository(pool as unknown as Pool);
+
+  const result = await repository.findMonthlyInsights(lookup);
+
+  assert.deepEqual(result, {
+    ...lookup,
+    insights: saveInput.insights,
+    generatedAt: saveInput.generatedAt,
+  });
+  assert.deepEqual(pool.queries[0]?.parameters, [
+    lookup.targetMonth,
+    lookup.analyticsVersion,
+    lookup.modelId,
+    lookup.promptVersion,
+  ]);
+});
+
+test("monthly_insights cacheは対象月をキーに検証済み結果をupsertする", async () => {
+  const pool = new FakePool();
+  const repository = new StatementRepository(pool as unknown as Pool);
+
+  await repository.saveMonthlyInsights(saveInput);
+
+  const query = pool.queries[0];
+  assert.ok(query);
+  assert.match(query.text, /INSERT INTO monthly_insights/);
+  assert.match(query.text, /ON CONFLICT \(target_month\) DO UPDATE/);
+  assert.deepEqual(query.parameters, [
+    saveInput.targetMonth,
+    saveInput.analyticsVersion,
+    saveInput.modelId,
+    saveInput.promptVersion,
+    JSON.stringify(saveInput.insights),
+    saveInput.generatedAt,
+  ]);
+});

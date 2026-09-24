@@ -11,6 +11,7 @@ import type {
   MonthlyAnalyticsAggregates,
   MonthlyAnalyticsRanges,
 } from "../analytics/monthly-analytics.js";
+import type { InsightsDocument } from "../insights/monthly-insights.js";
 
 export const STATEMENT_STATUSES = [
   "UPLOAD_PENDING",
@@ -78,6 +79,23 @@ export interface TransactionRecord extends CreateTransactionInput {
   id: number;
   statementId: string;
   createdAt: Date;
+}
+
+export interface MonthlyInsightsCacheLookup {
+  targetMonth: string;
+  analyticsVersion: string;
+  modelId: string;
+  promptVersion: string;
+}
+
+export interface MonthlyInsightsCacheRecord extends MonthlyInsightsCacheLookup {
+  insights: unknown;
+  generatedAt: Date;
+}
+
+export interface SaveMonthlyInsightsInput extends MonthlyInsightsCacheLookup {
+  insights: InsightsDocument;
+  generatedAt: Date;
 }
 
 export interface ProcessingClaim {
@@ -158,6 +176,15 @@ interface AnalyticsBucketDatabaseRow {
   name: string;
   amount: string;
   count: string;
+}
+
+interface MonthlyInsightsDatabaseRow {
+  target_month: string;
+  analytics_version: string;
+  model_id: string;
+  prompt_version: string;
+  insights: unknown;
+  generated_at: Date;
 }
 
 export function normalizeTargetMonth(value: string): string {
@@ -583,6 +610,77 @@ export class StatementRepository {
       categories: categories.rows.map(mapAnalyticsBucket),
       merchants: merchants.rows.map(mapAnalyticsBucket),
     };
+  }
+
+  public async findMonthlyInsights(
+    lookup: MonthlyInsightsCacheLookup,
+  ): Promise<MonthlyInsightsCacheRecord | null> {
+    const result = await this.pool.query<MonthlyInsightsDatabaseRow>(
+      `
+        SELECT
+          target_month::text,
+          analytics_version,
+          model_id,
+          prompt_version,
+          insights,
+          generated_at
+        FROM monthly_insights
+        WHERE target_month = $1::date
+          AND analytics_version = $2
+          AND model_id = $3
+          AND prompt_version = $4
+      `,
+      [
+        lookup.targetMonth,
+        lookup.analyticsVersion,
+        lookup.modelId,
+        lookup.promptVersion,
+      ],
+    );
+    const row = result.rows[0];
+
+    return row
+      ? {
+          targetMonth: row.target_month,
+          analyticsVersion: row.analytics_version,
+          modelId: row.model_id,
+          promptVersion: row.prompt_version,
+          insights: row.insights,
+          generatedAt: row.generated_at,
+        }
+      : null;
+  }
+
+  public async saveMonthlyInsights(
+    input: SaveMonthlyInsightsInput,
+  ): Promise<void> {
+    await this.pool.query(
+      `
+        INSERT INTO monthly_insights (
+          target_month,
+          analytics_version,
+          model_id,
+          prompt_version,
+          insights,
+          generated_at
+        ) VALUES ($1::date, $2, $3, $4, $5::jsonb, $6)
+        ON CONFLICT (target_month) DO UPDATE
+        SET
+          analytics_version = EXCLUDED.analytics_version,
+          model_id = EXCLUDED.model_id,
+          prompt_version = EXCLUDED.prompt_version,
+          insights = EXCLUDED.insights,
+          generated_at = EXCLUDED.generated_at
+      `,
+      [
+        input.targetMonth,
+        input.analyticsVersion,
+        input.modelId,
+        input.promptVersion,
+        JSON.stringify(input.insights),
+        input.generatedAt,
+      ],
+    );
   }
 
   public async saveTransactionsAndComplete(

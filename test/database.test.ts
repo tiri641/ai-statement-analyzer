@@ -53,7 +53,7 @@ beforeEach(async () => {
     return;
   }
 
-  await pool.query("TRUNCATE transactions, statements CASCADE");
+  await pool.query("TRUNCATE monthly_insights, transactions, statements CASCADE");
 });
 
 after(async () => {
@@ -72,7 +72,7 @@ databaseTest("Migrationを再実行してもエラーにならない", async () 
     `,
   );
 
-  assert.equal(result.rows[0]?.count, "4");
+  assert.equal(result.rows[0]?.count, "5");
 });
 
 databaseTest("月別・日付・merchant・category用のIndexが作成される", async () => {
@@ -1089,4 +1089,46 @@ databaseTest("Monthly AnalyticsはCOMPLETEDと取引日の半開区間だけを�
       merchants: [{ name: "カフェ", amount: 50, count: 1 }],
     },
   });
+});
+
+databaseTest("monthly_insightsは対象月とversionが一致したcacheだけを返す", async () => {
+  assert.ok(repository);
+
+  const generatedAt = new Date("2026-09-25T03:00:00.000Z");
+  const cache = {
+    targetMonth: "2026-08-01",
+    analyticsVersion: "monthly-analytics-v1:hash",
+    modelId: "insights-model",
+    promptVersion: "v1",
+    insights: {
+      insights: [
+        {
+          type: "NOTABLE_SPENDING" as const,
+          severity: "info" as const,
+          title: "注目支出",
+          description: "食費の支出が目立ちます。",
+          category: "食費",
+        },
+      ],
+    },
+    generatedAt,
+  };
+
+  await repository.saveMonthlyInsights(cache);
+
+  const hit = await repository.findMonthlyInsights({
+    targetMonth: cache.targetMonth,
+    analyticsVersion: cache.analyticsVersion,
+    modelId: cache.modelId,
+    promptVersion: cache.promptVersion,
+  });
+  const fingerprintMiss = await repository.findMonthlyInsights({
+    targetMonth: cache.targetMonth,
+    analyticsVersion: "monthly-analytics-v1:other-hash",
+    modelId: cache.modelId,
+    promptVersion: cache.promptVersion,
+  });
+
+  assert.deepEqual(hit, cache);
+  assert.equal(fingerprintMiss, null);
 });

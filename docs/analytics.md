@@ -17,3 +17,14 @@ SQLを数値の正とする。
 - 返金は負数としてSUMに含める。
 
 同じAnalytics DTOをDashboardとInsights promptで共有し、LLMへ全明細を送らず、確定済みの集計値のみ渡す。
+
+## AI Spending Insights
+
+Phase 11は`GET /analytics/monthly/insights?year=YYYY&month=M`を提供する。APIはまず月次Analyticsを取得し、compact DTOからcache fingerprintを作成する。
+
+- 対象月、Analytics fingerprint、model ID、prompt versionが一致する`monthly_insights`はBedrockを呼ばず返す。
+- cache miss時は、合計、件数、カテゴリ、merchant、前月比だけをBedrockへ渡す。
+- BedrockのTool Use入力をZodとAnalytics参照で検証し、検証済み結果だけをPostgreSQLへ保存する。
+- `CATEGORY_INCREASE`、`MERCHANT_INCREASE`、`NOTABLE_SPENDING`以外のtypeは返さない。
+- 前月がない場合は前月比較を生成しない。
+- Bedrock障害時は`503 INSIGHTS_UNAVAILABLE`を返すが、数値Analytics APIは利用できる。

@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   createApp,
   type AnalyticsStore,
+  type MonthlyInsightsProvider,
   type StatementStore,
 } from "../src/app.ts";
 import type { MonthlyAnalyticsAggregates } from "../src/analytics/monthly-analytics.ts";
@@ -44,6 +45,7 @@ function createTestApp(options: {
   markUploaded?: (id: string) => Promise<StatementRecord | null>;
   objectStore?: Partial<StatementObjectStore>;
   analytics?: AnalyticsStore;
+  monthlyInsights?: MonthlyInsightsProvider;
 } = {}) {
   const objectStore: StatementObjectStore = {
     createPresignedPutUrl: async () => "https://s3.example.test/upload",
@@ -69,7 +71,7 @@ function createTestApp(options: {
       createStatementRecord({ status: "UPLOADED" }),
   };
 
-  return createApp({
+  const dependencies = {
     database: {
       query: async () => ({ rows: [] }),
     },
@@ -98,7 +100,12 @@ function createTestApp(options: {
       receiveOne: async () => null,
       deleteMessage: async () => undefined,
     },
-  });
+    ...(options.monthlyInsights
+      ? { monthlyInsights: options.monthlyInsights }
+      : {}),
+  };
+
+  return createApp(dependencies);
 }
 
 test("POST /statementsは入力を検証してstatementを作成する", async () => {
@@ -791,6 +798,112 @@ test("Monthly Analytics APIはDB障害の詳細を返さず503にする", async 
     error: {
       code: "DEPENDENCY_UNAVAILABLE",
       message: "依存サービスを利用できません。",
+    },
+  });
+  assert.equal(body.includes("should-not-leak"), false);
+});
+
+test("Monthly Insights APIは年月を受け取り、生成済みInsightsを返す", async () => {
+  let received: { year: number; month: number } | undefined;
+  const app = createTestApp({
+    monthlyInsights: {
+      getMonthlyInsights: async (year, month) => {
+        received = { year, month };
+        return {
+          year,
+          month,
+          insights: [
+            {
+              type: "NOTABLE_SPENDING",
+              severity: "info",
+              title: "注目支出",
+              description: "食費の支出が目立ちます。",
+              category: "食費",
+            },
+          ],
+          generatedAt: "2026-09-25T03:00:00.000Z",
+          cached: true,
+        };
+      },
+    },
+  });
+
+  const response = await app.request(
+    "/analytics/monthly/insights?year=2026&month=8",
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(received, { year: 2026, month: 8 });
+  assert.deepEqual(await response.json(), {
+    year: 2026,
+    month: 8,
+    insights: [
+      {
+        type: "NOTABLE_SPENDING",
+        severity: "info",
+        title: "注目支出",
+        description: "食費の支出が目立ちます。",
+        category: "食費",
+      },
+    ],
+    generatedAt: "2026-09-25T03:00:00.000Z",
+    cached: true,
+  });
+});
+
+test("Monthly Insights APIは未知または重複Query Parameterを400で拒否する", async () => {
+  const app = createTestApp({
+    monthlyInsights: {
+      getMonthlyInsights: async () => {
+        throw new Error("should not call service");
+      },
+    },
+  });
+
+  for (const path of [
+    "/analytics/monthly/insights?year=2026&month=8&debug=true",
+    "/analytics/monthly/insights?year=2026&year=2026&month=8",
+  ]) {
+    const response = await app.request(path);
+    assert.equal(response.status, 400, path);
+  }
+});
+
+test("Monthly Insights APIはBedrock設定がなくても数値APIを壊さず503を返す", async () => {
+  const app = createTestApp();
+
+  const response = await app.request(
+    "/analytics/monthly/insights?year=2026&month=8",
+  );
+
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), {
+    error: {
+      code: "INSIGHTS_UNAVAILABLE",
+      message: "支出Insightsを利用できません。",
+    },
+  });
+});
+
+test("Monthly Insights APIはBedrockやcacheの障害詳細を503で隠す", async () => {
+  const app = createTestApp({
+    monthlyInsights: {
+      getMonthlyInsights: async () => {
+        throw new Error("password=should-not-leak");
+      },
+    },
+  });
+
+  const response = await app.request(
+    "/analytics/monthly/insights?year=2026&month=8",
+  );
+  const body = await response.text();
+
+  assert.equal(response.status, 503);
+  assert.deepEqual(JSON.parse(body), {
+    error: {
+      code: "INSIGHTS_UNAVAILABLE",
+      message: "支出Insightsを利用できません。",
     },
   });
   assert.equal(body.includes("should-not-leak"), false);

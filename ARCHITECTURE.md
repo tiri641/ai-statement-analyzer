@@ -143,12 +143,17 @@ sequenceDiagram
     API->>API: percentages, deltas, averages
     API-->>FE: numeric Dashboard response
     FE->>API: GET /analytics/monthly/insights?year&month
-    API->>DB: read metrics / cached validated insights
-    API->>B: compact analytics only, no calculation request
-    B-->>API: insight JSON
-    API->>API: Zod validation + policy checks
-    API->>DB: cache validated insights
-    API-->>FE: validated insights
+    API->>DB: read metrics and calculate fingerprint
+    API->>DB: lookup monthly_insights by month/version/model/prompt
+    alt cache hit
+        DB-->>API: validated cached insights
+    else cache miss
+        API->>B: compact analytics only, no calculation request
+        B-->>API: Tool Use insight JSON
+        API->>API: Zod validation + policy checks
+        API->>DB: upsert validated insights
+    end
+    API-->>FE: validated insights + cached flag
 ```
 
 数値DashboardはBedrock障害から独立させる。Insightsは別Endpoint・別キャッシュにするため、レイテンシー、費用、失敗の影響範囲を分離できる。

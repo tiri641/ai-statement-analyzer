@@ -238,7 +238,7 @@ Phase 10の実装では、前月比を`(current - previous) / abs(previous) * 10
 
 Analyticsの数値は低レイテンシー・低コスト・決定的なSQL結果である。一方InsightsはBedrockのレイテンシー、料金、Throttling、モデル変更の影響を受ける。Endpointを分けると、AI障害でもDashboardの数値を表示でき、cacheも独立して管理できる。
 
-### 推奨動作
+### 動作
 
 1. APIがSQL Analyticsを取得する。
 2. 既存のmonthly_insights cacheが、analytics version・model・prompt versionと一致すれば返す。
@@ -263,7 +263,11 @@ Analyticsの数値は低レイテンシー・低コスト・決定的なSQL結�
 }
 ```
 
-前月なしの場合はCATEGORY_INCREASEを生成せず、NOTABLE_SPENDING等の表現に限定する。Bedrock failure時は、数値APIを壊さず503 INSIGHTS_UNAVAILABLEを返す案を推奨する。将来、待ち時間がUX上問題になったらInsightsだけSQS非同期Jobにする。
+前月なしの場合は`CATEGORY_INCREASE`と`MERCHANT_INCREASE`を生成せず、`NOTABLE_SPENDING`に限定する。Insights typeはPhase 11では`CATEGORY_INCREASE`、`MERCHANT_INCREASE`、`NOTABLE_SPENDING`の3種類、severityは`info`または`warning`とする。Insightsは最大5件、titleは80文字以内、descriptionは300文字以内とし、category・merchantは入力Analyticsに存在する値だけを許可する。
+
+Bedrock failure、cache failure、Analytics failure、不正なAI応答は`503 INSIGHTS_UNAVAILABLE`を返す。数値APIはInsights障害の影響を受けない。`cached`はAPIがcache hit時に`true`、新規生成時に`false`を付与する。`generatedAt`はAPIまたはDBが管理し、AIには生成させない。
+
+`monthly_insights`はPostgreSQLに対象月ごとに1行保存する。`analytics_version`はcompact Analytics DTOの正規化JSONに対するSHA-256 fingerprint、`model_id`は`BEDROCK_INSIGHTS_MODEL_ID`、`prompt_version`は`INSIGHTS_PROMPT_VERSION`である。3つのversion条件が一致しないcacheは使用せず、生成後に対象月行をupsertする。
 
 ## HTTP statusと再試行
 
@@ -283,5 +287,5 @@ Analyticsの数値は低レイテンシー・低コスト・決定的なSQL結�
 ## Decision Required
 
 - 認証・ユーザー単位のowner_idをいつ導入するか。
-- Insightsを同期GET + cacheで始めるか、Phase 11から非同期生成にするか。推奨は同期GET + cache。
+- Phase 11は同期GET + PostgreSQL cacheで開始する。待ち時間がUX上問題になった場合のSQS非同期化は後続Phaseで再評価する。
 - DB更新とSQS送信の漏れ対策を、MVPのreconciliationで始めるかOutboxから始めるか。
