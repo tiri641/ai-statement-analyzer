@@ -26,6 +26,18 @@ import type {
 import { ObjectNotFoundError } from "./storage/object-store.js";
 import type { StatementObjectStore } from "./storage/object-store.js";
 import type { AnalyzeJobQueue } from "./queue/analyze-job.js";
+import {
+  createStructuredLogger,
+  type StructuredLogger,
+} from "./observability/logger.js";
+
+type ApiEnv = {
+  Variables: {
+    requestId: string;
+  };
+};
+
+type ApiContext = Context<ApiEnv>;
 
 export interface HealthDatabase {
   query(text: string): Promise<unknown>;
@@ -57,12 +69,13 @@ export interface AppDependencies {
   objectStore: StatementObjectStore;
   jobQueue: AnalyzeJobQueue;
   presignedUrlExpiresSeconds?: number;
+  logger?: StructuredLogger;
 }
 
 type ApiErrorStatus = 400 | 404 | 409 | 413 | 503;
 
 function errorResponse(
-  context: Context,
+  context: ApiContext,
   status: ApiErrorStatus,
   code: string,
   message: string,
@@ -78,13 +91,20 @@ function errorResponse(
   );
 }
 
-function logDependencyFailure(event: string) {
-  console.error(
-    JSON.stringify({
-      event,
-      errorCode: "DEPENDENCY_UNAVAILABLE",
-    }),
-  );
+function logDependencyFailure(
+  logger: StructuredLogger,
+  context: ApiContext,
+  event: string,
+  statementId?: string,
+) {
+  logger.error({
+    event,
+    requestId: context.get("requestId"),
+    ...(statementId ? { statementId } : {}),
+    status: "failed",
+    disposition: "RETRYABLE",
+    errorCode: "DEPENDENCY_UNAVAILABLE",
+  });
 }
 
 function isTooLargeContentLength(body: unknown): boolean {
@@ -147,31 +167,42 @@ function toUploadStatus(statement: StatementRecord) {
   };
 }
 
-function logStorageFailure(event: string) {
-  console.error(
-    JSON.stringify({
-      event,
-      errorCode: "DEPENDENCY_UNAVAILABLE",
-    }),
-  );
+function logStorageFailure(
+  logger: StructuredLogger,
+  context: ApiContext,
+  event: string,
+  statementId?: string,
+) {
+  logDependencyFailure(logger, context, event, statementId);
 }
 
-function logQueueFailure(event: string) {
-  console.error(
-    JSON.stringify({
-      event,
-      errorCode: "DEPENDENCY_UNAVAILABLE",
-    }),
-  );
+function logQueueFailure(
+  logger: StructuredLogger,
+  context: ApiContext,
+  event: string,
+  statementId?: string,
+) {
+  logDependencyFailure(logger, context, event, statementId);
 }
 
-function logInsightsFailure(event: string) {
-  console.error(
-    JSON.stringify({
-      event,
-      errorCode: "INSIGHTS_UNAVAILABLE",
-    }),
-  );
+function logInsightsFailure(
+  logger: StructuredLogger,
+  context: ApiContext,
+  event: string,
+  statementId?: string,
+) {
+  logger.error({
+    event,
+    requestId: context.get("requestId"),
+    ...(statementId ? { statementId } : {}),
+    status: "failed",
+    disposition: event === "monthly_insights_config_missing" ? "PERMANENT" : "RETRYABLE",
+    errorCode: "INSIGHTS_UNAVAILABLE",
+  });
+}
+
+function getSafeErrorCode(error: unknown): string {
+  return error instanceof Error && error.name ? error.name : "UNKNOWN_ERROR";
 }
 
 export function createApp({
@@ -182,8 +213,48 @@ export function createApp({
   objectStore,
   jobQueue,
   presignedUrlExpiresSeconds = 300,
+  logger = createStructuredLogger({ service: "api" }),
 }: AppDependencies) {
-  const app = new Hono();
+  const app = new Hono<ApiEnv>();
+
+  app.use("*", async (context, next) => {
+    const requestId = randomUUID();
+    const startedAt = Date.now();
+    context.set("requestId", requestId);
+    context.header("X-Request-Id", requestId);
+    logger.info({
+      event: "api_request_started",
+      requestId,
+      method: context.req.method,
+      route: context.req.path,
+      status: "started",
+    });
+
+    try {
+      await next();
+    } catch (error) {
+      logger.error({
+        event: "api_request_failed",
+        requestId,
+        method: context.req.method,
+        route: context.req.path,
+        status: "failed",
+        errorCode: getSafeErrorCode(error),
+      });
+      throw error;
+    } finally {
+      context.header("X-Request-Id", requestId);
+      logger.info({
+        event: "api_request_completed",
+        requestId,
+        method: context.req.method,
+        route: context.req.path,
+        status: context.res.status >= 500 ? "error" : "completed",
+        httpStatus: context.res.status,
+        durationMs: Date.now() - startedAt,
+      });
+    }
+  });
 
   app.get("/health", (context) => {
     return context.json({
@@ -201,12 +272,11 @@ export function createApp({
         database: "ok",
       });
     } catch {
-      console.error(
-        JSON.stringify({
-          event: "database_health_check_failed",
-          errorCode: "DATABASE_UNAVAILABLE",
-        }),
-      );
+      logger.error({
+        event: "database_health_check_failed",
+        requestId: context.get("requestId"),
+        errorCode: "DATABASE_UNAVAILABLE",
+      });
 
       return context.json(
         {
@@ -248,7 +318,7 @@ export function createApp({
         buildMonthlyAnalytics(year, month, aggregates.current, aggregates.previous),
       );
     } catch {
-      logDependencyFailure("monthly_analytics_failed");
+      logDependencyFailure(logger, context, "monthly_analytics_failed");
       return errorResponse(
         context,
         503,
@@ -280,7 +350,7 @@ export function createApp({
     }
 
     if (!monthlyInsights) {
-      logInsightsFailure("monthly_insights_config_missing");
+      logInsightsFailure(logger, context, "monthly_insights_config_missing");
       return errorResponse(
         context,
         503,
@@ -295,7 +365,7 @@ export function createApp({
         await monthlyInsights.getMonthlyInsights(year, month),
       );
     } catch {
-      logInsightsFailure("monthly_insights_failed");
+      logInsightsFailure(logger, context, "monthly_insights_failed");
       return errorResponse(
         context,
         503,
@@ -378,6 +448,12 @@ export function createApp({
           expiresInSeconds: presignedUrlExpiresSeconds,
         });
         const statement = await statements.create(createInput);
+        logger.info({
+          event: "statement_created",
+          requestId: context.get("requestId"),
+          statementId: statement.id,
+          status: statement.status,
+        });
 
         return context.json(
           {
@@ -404,7 +480,12 @@ export function createApp({
           );
         }
 
-        logDependencyFailure("statement_create_failed");
+        logDependencyFailure(
+          logger,
+          context,
+          "statement_create_failed",
+          createInput.id,
+        );
         return errorResponse(
           context,
           503,
@@ -432,7 +513,12 @@ export function createApp({
     try {
       statement = await statements.findById(parsedId.data);
     } catch {
-      logDependencyFailure("upload_complete_statement_get_failed");
+      logDependencyFailure(
+        logger,
+        context,
+        "upload_complete_statement_get_failed",
+        parsedId.data,
+      );
       return errorResponse(
         context,
         503,
@@ -460,6 +546,12 @@ export function createApp({
     }
 
     if (statement.status !== "UPLOAD_PENDING") {
+      logger.info({
+        event: "statement_upload_already_completed",
+        requestId: context.get("requestId"),
+        statementId: statement.id,
+        status: statement.status,
+      });
       return context.json(toUploadStatus(statement));
     }
 
@@ -480,7 +572,12 @@ export function createApp({
         );
       }
 
-      logStorageFailure("upload_complete_head_object_failed");
+      logStorageFailure(
+        logger,
+        context,
+        "upload_complete_head_object_failed",
+        statement.id,
+      );
       return errorResponse(
         context,
         503,
@@ -510,7 +607,12 @@ export function createApp({
         uploadedStatement = await statements.findById(statement.id);
       }
     } catch {
-      logDependencyFailure("upload_complete_mark_uploaded_failed");
+      logDependencyFailure(
+        logger,
+        context,
+        "upload_complete_mark_uploaded_failed",
+        statement.id,
+      );
       return errorResponse(
         context,
         503,
@@ -537,6 +639,12 @@ export function createApp({
       );
     }
 
+    logger.info({
+      event: "statement_upload_completed",
+      requestId: context.get("requestId"),
+      statementId: uploadedStatement.id,
+      status: uploadedStatement.status,
+    });
     return context.json(toUploadStatus(uploadedStatement));
   });
 
@@ -557,7 +665,12 @@ export function createApp({
     try {
       statement = await statements.findById(parsedId.data);
     } catch {
-      logQueueFailure("analyze_statement_get_failed");
+      logQueueFailure(
+        logger,
+        context,
+        "analyze_statement_get_failed",
+        parsedId.data,
+      );
       return errorResponse(
         context,
         503,
@@ -594,6 +707,12 @@ export function createApp({
     }
 
     if (statement.status !== "UPLOADED") {
+      logger.info({
+        event: "analyze_already_queued",
+        requestId: context.get("requestId"),
+        statementId: statement.id,
+        status: statement.status,
+      });
       return context.json(toUploadStatus(statement));
     }
 
@@ -602,7 +721,12 @@ export function createApp({
     try {
       queuedStatement = await statements.markQueued(statement.id);
     } catch {
-      logQueueFailure("analyze_mark_queued_failed");
+      logQueueFailure(
+        logger,
+        context,
+        "analyze_mark_queued_failed",
+        statement.id,
+      );
       return errorResponse(
         context,
         503,
@@ -615,7 +739,12 @@ export function createApp({
       try {
         queuedStatement = await statements.findById(statement.id);
       } catch {
-        logQueueFailure("analyze_statement_refetch_failed");
+        logQueueFailure(
+          logger,
+          context,
+          "analyze_statement_refetch_failed",
+          statement.id,
+        );
         return errorResponse(
           context,
           503,
@@ -654,13 +783,28 @@ export function createApp({
         );
 
         if (!resetStatement) {
-          logQueueFailure("analyze_queue_state_recovery_failed");
+          logQueueFailure(
+            logger,
+            context,
+            "analyze_queue_state_recovery_failed",
+            queuedStatement.id,
+          );
         }
       } catch {
-        logQueueFailure("analyze_queue_state_recovery_failed");
+        logQueueFailure(
+          logger,
+          context,
+          "analyze_queue_state_recovery_failed",
+          queuedStatement.id,
+        );
       }
 
-      logQueueFailure("analyze_job_send_failed");
+      logQueueFailure(
+        logger,
+        context,
+        "analyze_job_send_failed",
+        queuedStatement.id,
+      );
       return errorResponse(
         context,
         503,
@@ -669,6 +813,12 @@ export function createApp({
       );
     }
 
+    logger.info({
+      event: "analyze_job_sent",
+      requestId: context.get("requestId"),
+      statementId: queuedStatement.id,
+      status: queuedStatement.status,
+    });
     return context.json(toUploadStatus(queuedStatement), 202);
   });
 
@@ -698,7 +848,12 @@ export function createApp({
 
       return context.json(toPublicStatement(statement));
     } catch {
-      logDependencyFailure("statement_get_failed");
+      logDependencyFailure(
+        logger,
+        context,
+        "statement_get_failed",
+        parsedId.data,
+      );
       return errorResponse(
         context,
         503,

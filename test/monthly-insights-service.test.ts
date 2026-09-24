@@ -13,10 +13,12 @@ import {
   MonthlyInsightsService,
   type MonthlyInsightsAnalyzer,
 } from "../src/insights/monthly-insights-service.ts";
+import { InvalidInsightsResponseError } from "../src/insights/monthly-insights.ts";
 import type {
   CompactInsightsInput,
   InsightsDocument,
 } from "../src/insights/monthly-insights.ts";
+import type { StructuredLogger } from "../src/observability/logger.ts";
 
 const current: MonthlyAnalyticsAggregate = {
   totalAmount: 120000,
@@ -70,6 +72,7 @@ function createService(options: {
   cache: FakeCache;
   analyzer: MonthlyInsightsAnalyzer;
   aggregates?: MonthlyAnalyticsAggregates;
+  logger?: StructuredLogger;
 }) {
   return new MonthlyInsightsService({
     analytics: {
@@ -80,6 +83,7 @@ function createService(options: {
     analyzer: options.analyzer,
     modelId: "insights-model",
     promptVersion: "v1",
+    ...(options.logger ? { logger: options.logger } : {}),
     now: () => new Date("2026-09-25T03:00:00.000Z"),
   });
 }
@@ -199,4 +203,64 @@ test("前月なしのAnalyticsをBedrockへ渡す", async () => {
   await service.getMonthlyInsights(2026, 8);
 
   assert.equal(receivedInput?.previous, null);
+});
+
+test("InsightsのBedrock障害は安全な相関ログへ記録する", async () => {
+  const events: Array<Record<string, unknown>> = [];
+  const error = new Error("raw prompt must not be logged");
+  error.name = "ThrottlingException";
+  const service = createService({
+    cache: new FakeCache(),
+    analyzer: {
+      analyze: async () => {
+        throw error;
+      },
+    },
+    logger: {
+      info: (fields) => events.push(fields),
+      error: (fields) => events.push(fields),
+    },
+  });
+
+  await assert.rejects(() => service.getMonthlyInsights(2026, 8), error);
+
+  const failure = events.find(
+    (fields) => fields.event === "bedrock_request_failed",
+  );
+  assert.equal(failure?.stage, "insights");
+  assert.equal(failure?.modelId, "insights-model");
+  assert.equal(failure?.promptVersion, "v1");
+  assert.equal(failure?.errorCode, "ThrottlingException");
+  assert.equal(failure?.disposition, "RETRYABLE");
+  assert.equal(JSON.stringify(events).includes("raw prompt"), false);
+});
+
+test("Insightsの不正なBedrock応答は通信障害と別の相関ログへ記録する", async () => {
+  const events: Array<Record<string, unknown>> = [];
+  const service = createService({
+    cache: new FakeCache(),
+    analyzer: {
+      analyze: async () => {
+        throw new InvalidInsightsResponseError("raw model response");
+      },
+    },
+    logger: {
+      info: (fields) => events.push(fields),
+      error: (fields) => events.push(fields),
+    },
+  });
+
+  await assert.rejects(() => service.getMonthlyInsights(2026, 8));
+
+  const failure = events.find(
+    (fields) => fields.event === "bedrock_response_invalid",
+  );
+  assert.equal(failure?.stage, "insights");
+  assert.equal(failure?.errorCode, "INVALID_INSIGHTS_RESPONSE");
+  assert.equal(failure?.disposition, "PERMANENT");
+  assert.equal(JSON.stringify(events).includes("raw model response"), false);
+  assert.equal(
+    events.some((fields) => fields.event === "bedrock_request_failed"),
+    false,
+  );
 });

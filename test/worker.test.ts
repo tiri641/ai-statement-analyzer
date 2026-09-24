@@ -66,6 +66,41 @@ test("Workerは処理関数の成功後にMessageを削除する", async () => {
   assert.deepEqual(events, [`handle:${statementId}`, "delete:receipt-1"]);
 });
 
+test("Workerは受信時にMessageの相関情報をログへ記録する", async () => {
+  let worker!: AnalyzeWorker;
+  const job = createJob({ receiveCount: 2 });
+  const { events, logger } = createLogger();
+  const queue = createQueue({
+    receiveOne: async () => {
+      worker.requestShutdown();
+      return job;
+    },
+  });
+  worker = new AnalyzeWorker({
+    queue,
+    logger,
+    handleJob: async () => undefined,
+  });
+
+  await worker.run();
+
+  const received = events.find(
+    ({ fields }) => fields.event === "worker_message_received",
+  );
+  assert.deepEqual(
+    {
+      statementId: received?.fields.statementId,
+      messageId: received?.fields.messageId,
+      receiveCount: received?.fields.receiveCount,
+    },
+    {
+      statementId,
+      messageId: job.messageId,
+      receiveCount: 2,
+    },
+  );
+});
+
 test("WorkerはMessageを1件ずつ順番に処理する", async () => {
   const events: string[] = [];
   let worker!: AnalyzeWorker;
@@ -166,6 +201,14 @@ test("Workerは処理関数が失敗したMessageを削除せず継続する", a
   assert.equal(deleteCount, 0);
   assert.equal(events.some(({ fields }) => fields.errorCode === "Error"), true);
   assert.equal(
+    events.some(
+      ({ fields }) =>
+        fields.event === "worker_job_failed" &&
+        fields.disposition === "RETRYABLE",
+    ),
+    true,
+  );
+  assert.equal(
     JSON.stringify(events).includes("database password"),
     false,
   );
@@ -198,6 +241,15 @@ test("WorkerはDeleteMessage失敗時も継続する", async () => {
 
   assert.equal(
     events.some(({ fields }) => fields.event === "worker_delete_failed"),
+    true,
+  );
+  assert.equal(
+    events.some(
+      ({ fields }) =>
+        fields.event === "worker_delete_failed" &&
+        fields.disposition === "RETRYABLE" &&
+        fields.stage === "message-delete",
+    ),
     true,
   );
   assert.equal(JSON.stringify(events).includes("receipt handle"), false);

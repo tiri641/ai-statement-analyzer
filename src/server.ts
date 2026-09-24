@@ -8,6 +8,9 @@ import { MonthlyInsightsService } from "./insights/monthly-insights-service.js";
 import { isLoopbackHost } from "./server-safety.js";
 import { S3ObjectStore } from "./storage/s3-object-store.js";
 import { SqsJobQueue } from "./queue/sqs-job-queue.js";
+import { createStructuredLogger } from "./observability/logger.js";
+
+const logger = createStructuredLogger({ service: "api" });
 
 const port = Number(process.env.PORT ?? "3000");
 const host = process.env.HOST ?? "127.0.0.1";
@@ -22,42 +25,34 @@ const presignedUrlExpiresSeconds = Number(
 );
 
 if (!isLoopbackHost(host)) {
-  console.error(
-    JSON.stringify({
-      event: "api_start_failed",
-      errorCode: "AUTH_REQUIRED_FOR_NON_LOOPBACK_HOST",
-    }),
-  );
+  logger.error({
+    event: "api_start_failed",
+    errorCode: "AUTH_REQUIRED_FOR_NON_LOOPBACK_HOST",
+  });
   process.exit(1);
 }
 
 if (!databaseUrl) {
-  console.error(
-    JSON.stringify({
-      event: "api_start_failed",
-      errorCode: "DATABASE_URL_MISSING",
-    }),
-  );
+  logger.error({
+    event: "api_start_failed",
+    errorCode: "DATABASE_URL_MISSING",
+  });
   process.exit(1);
 }
 
 if (!s3BucketName) {
-  console.error(
-    JSON.stringify({
-      event: "api_start_failed",
-      errorCode: "S3_BUCKET_NAME_MISSING",
-    }),
-  );
+  logger.error({
+    event: "api_start_failed",
+    errorCode: "S3_BUCKET_NAME_MISSING",
+  });
   process.exit(1);
 }
 
 if (!sqsQueueUrl) {
-  console.error(
-    JSON.stringify({
-      event: "api_start_failed",
-      errorCode: "SQS_QUEUE_URL_MISSING",
-    }),
-  );
+  logger.error({
+    event: "api_start_failed",
+    errorCode: "SQS_QUEUE_URL_MISSING",
+  });
   process.exit(1);
 }
 
@@ -66,12 +61,10 @@ if (
   presignedUrlExpiresSeconds < 1 ||
   presignedUrlExpiresSeconds > 604800
 ) {
-  console.error(
-    JSON.stringify({
-      event: "api_start_failed",
-      errorCode: "S3_PRESIGNED_URL_EXPIRES_SECONDS_INVALID",
-    }),
-  );
+  logger.error({
+    event: "api_start_failed",
+    errorCode: "S3_PRESIGNED_URL_EXPIRES_SECONDS_INVALID",
+  });
   process.exit(1);
 }
 
@@ -91,6 +84,7 @@ const monthlyInsights = insightsModelId
       }),
       modelId: insightsModelId,
       promptVersion: insightsPromptVersion,
+      logger,
     })
   : undefined;
 const app = createApp({
@@ -106,6 +100,7 @@ const app = createApp({
     region: awsRegion,
   }),
   presignedUrlExpiresSeconds,
+  logger,
   ...(monthlyInsights ? { monthlyInsights } : {}),
 });
 const server = serve(
@@ -115,13 +110,12 @@ const server = serve(
     port,
   },
   (info) => {
-    console.log(
-      JSON.stringify({
-        event: "api_started",
-        host: info.address,
-        port: info.port,
-      }),
-    );
+    logger.info({
+      event: "api_started",
+      status: "started",
+      host: info.address,
+      port: info.port,
+    });
   },
 );
 
@@ -133,10 +127,10 @@ async function shutdown(signal: string) {
   }
 
   shuttingDown = true;
-  console.log(JSON.stringify({ event: "api_shutdown_started", signal }));
+  logger.info({ event: "api_shutdown_started", signal, status: "started" });
   server.close();
   await pool.end();
-  console.log(JSON.stringify({ event: "api_shutdown_completed" }));
+  logger.info({ event: "api_shutdown_completed", status: "completed" });
 }
 
 process.once("SIGINT", () => {

@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createApp, type HealthDatabase } from "../src/app.ts";
+import {
+  createStructuredLogger,
+  type StructuredLogger,
+} from "../src/observability/logger.ts";
 
 function createTestDatabase(
   query: HealthDatabase["query"],
@@ -8,7 +12,10 @@ function createTestDatabase(
   return { query };
 }
 
-function createTestApp(database: HealthDatabase) {
+function createTestApp(
+  database: HealthDatabase,
+  logger?: StructuredLogger,
+) {
   return createApp({
     database,
     statements: {
@@ -53,8 +60,41 @@ function createTestApp(database: HealthDatabase) {
       receiveOne: async () => null,
       deleteMessage: async () => undefined,
     },
+    ...(logger ? { logger } : {}),
   });
 }
+
+test("APIはサーバー生成requestIdをHeaderと開始・完了ログへ記録する", async () => {
+  const lines: string[] = [];
+  const logger = createStructuredLogger({
+    service: "api",
+    now: () => new Date("2026-09-25T00:00:00.000Z"),
+    writeInfo: (line) => lines.push(line),
+    writeError: (line) => lines.push(line),
+  });
+  const app = createTestApp(
+    createTestDatabase(async () => ({ rows: [] })),
+    logger,
+  );
+
+  const response = await app.request("/health", {
+    headers: { "X-Request-Id": "client-controlled-id" },
+  });
+
+  const requestId = response.headers.get("X-Request-Id");
+  assert.match(requestId ?? "", /^[0-9a-f-]{36}$/);
+  assert.notEqual(requestId, "client-controlled-id");
+
+  const events = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+  const started = events.find((event) => event.event === "api_request_started");
+  const completed = events.find(
+    (event) => event.event === "api_request_completed",
+  );
+  assert.equal(started?.requestId, requestId);
+  assert.equal(completed?.requestId, requestId);
+  assert.equal(completed?.httpStatus, 200);
+  assert.equal(typeof completed?.durationMs, "number");
+});
 
 test("GET /healthはデータベースへ接続せずAPIの生存状態を返す", async () => {
   let queryCalled = false;

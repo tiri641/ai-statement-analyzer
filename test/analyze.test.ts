@@ -7,6 +7,7 @@ import type {
 } from "../src/database/statement-repository.ts";
 import type { StatementObjectStore } from "../src/storage/object-store.ts";
 import type { AnalyzeJobQueue } from "../src/queue/analyze-job.ts";
+import type { StructuredLogger } from "../src/observability/logger.ts";
 
 const statementId = "019abc00-0000-7000-8000-000000000001";
 
@@ -41,6 +42,7 @@ function createTestApp(options: {
     id: string,
   ) => Promise<StatementRecord | null>;
   sendAnalyzeJob?: (statementId: string) => Promise<void>;
+  logger?: StructuredLogger;
 } = {}) {
   const statements: StatementStore = {
     create: async (input: CreateStatementInput) =>
@@ -101,6 +103,7 @@ function createTestApp(options: {
     },
     objectStore,
     jobQueue,
+    ...(options.logger ? { logger: options.logger } : {}),
   });
 }
 
@@ -126,6 +129,25 @@ test("Analyze APIはUPLOADEDのstatementをQUEUEDにしてSQSへ送信する", a
     status: "QUEUED",
   });
   assert.deepEqual(events, ["markQueued", `send:${statementId}`]);
+});
+
+test("Analyze APIはrequestIdとstatementIdをSQS投入ログへ記録する", async () => {
+  const logs: Array<Record<string, unknown>> = [];
+  const logger: StructuredLogger = {
+    info: (fields) => logs.push(fields),
+    error: (fields) => logs.push(fields),
+  };
+  const app = createTestApp({ logger });
+
+  const response = await app.request(`/statements/${statementId}/analyze`, {
+    method: "POST",
+  });
+
+  const requestId = response.headers.get("X-Request-Id");
+  const sent = logs.find((fields) => fields.event === "analyze_job_sent");
+  assert.equal(sent?.requestId, requestId);
+  assert.equal(sent?.statementId, statementId);
+  assert.equal(sent?.status, "QUEUED");
 });
 
 test("Analyze APIはUPLOAD_PENDINGのstatementを拒否する", async () => {

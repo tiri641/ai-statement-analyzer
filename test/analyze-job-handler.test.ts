@@ -92,8 +92,25 @@ function createLogger(): WorkerLogger {
   };
 }
 
+function createCapturingLogger() {
+  const events: Array<{
+    level: "info" | "error";
+    fields: Record<string, unknown>;
+  }> = [];
+  return {
+    events,
+    logger: {
+      info: (fields: Record<string, unknown>) =>
+        events.push({ level: "info", fields }),
+      error: (fields: Record<string, unknown>) =>
+        events.push({ level: "error", fields }),
+    } satisfies WorkerLogger,
+  };
+}
+
 test("Analyze Job HandlerはclaimからCOMMITまでの依存呼び出し順を守る", async () => {
   const events: string[] = [];
+  const captured = createCapturingLogger();
   let receivedImage: OcrImageInput | undefined;
   const processingToken = claim.processingToken;
   const handler = createAnalyzeJobHandler({
@@ -139,6 +156,7 @@ test("Analyze Job HandlerはclaimからCOMMITまでの依存呼び出し順を�
         usage: null,
       };
     }),
+    logger: captured.logger,
     tokenGenerator: () => processingToken,
   });
   const abortController = new AbortController();
@@ -156,6 +174,18 @@ test("Analyze Job HandlerはclaimからCOMMITまでの依存呼び出し順を�
     bytes: new Uint8Array([1, 2, 3, 4]),
     contentType: "image/jpeg",
   });
+  assert.deepEqual(
+    captured.events
+      .filter(({ fields }) => fields.event === "worker_stage_completed")
+      .map(({ fields }) => fields.stage),
+    ["claim", "object-store", "ocr", "database"],
+  );
+  assert.deepEqual(
+    captured.events
+      .filter(({ fields }) => fields.event === "worker_stage_started")
+      .map(({ fields }) => fields.stage),
+    ["claim", "object-store", "ocr", "database"],
+  );
 });
 
 test("Analyze Job HandlerはCOMPLETEDの重複Messageを追加処理せずACKする", async () => {
@@ -495,6 +525,84 @@ test("Analyze Job HandlerはBedrockの一時障害でACKせずFAILEDにも変更
 
   assert.equal(await handler(job), "RETRY");
   assert.equal(markFailedCount, 0);
+});
+
+test("Analyze Job HandlerはBedrock障害を安全な相関ログへ記録する", async () => {
+  const captured = createCapturingLogger();
+  const error = new Error("raw credentials must not be logged");
+  error.name = "ThrottlingException";
+  const handler = createAnalyzeJobHandler({
+    statements: {
+      findById: async () => createStatement("PROCESSING"),
+      claimForProcessing: async () => claim,
+      saveTransactionsAndComplete: async () => undefined,
+      markFailed: async () => false,
+    },
+    objectStore: createObjectStore(async () => ({
+      bytes: new Uint8Array([1, 2, 3, 4]),
+      contentType: "image/jpeg",
+      contentLength: 4,
+    })),
+    analyzer: createAnalyzer(async () => {
+      throw error;
+    }),
+    logger: captured.logger,
+    modelId: "test-model",
+    tokenGenerator: () => claim.processingToken,
+  });
+
+  assert.equal(await handler(job), "RETRY");
+  const bedrockFailure = captured.events.find(
+    ({ fields }) => fields.event === "bedrock_request_failed",
+  );
+  assert.equal(bedrockFailure?.fields.statementId, statementId);
+  assert.equal(bedrockFailure?.fields.messageId, job.messageId);
+  assert.equal(bedrockFailure?.fields.receiveCount, job.receiveCount);
+  assert.equal(bedrockFailure?.fields.stage, "ocr");
+  assert.equal(bedrockFailure?.fields.errorCode, "ThrottlingException");
+  assert.equal(bedrockFailure?.fields.disposition, "RETRYABLE");
+  assert.equal(bedrockFailure?.fields.modelId, "test-model");
+  assert.equal(
+    JSON.stringify(captured.events).includes("raw credentials"),
+    false,
+  );
+});
+
+test("Analyze Job Handlerは不正なBedrock応答を相関ログへ記録する", async () => {
+  const captured = createCapturingLogger();
+  const handler = createAnalyzeJobHandler({
+    statements: {
+      findById: async () => createStatement("PROCESSING"),
+      claimForProcessing: async () => claim,
+      saveTransactionsAndComplete: async () => undefined,
+      markFailed: async () => true,
+    },
+    objectStore: createObjectStore(async () => ({
+      bytes: new Uint8Array([1, 2, 3, 4]),
+      contentType: "image/jpeg",
+      contentLength: 4,
+    })),
+    analyzer: createAnalyzer(async () => {
+      throw new InvalidOcrResponseError("raw model response must not be logged");
+    }),
+    logger: captured.logger,
+    modelId: "test-model",
+    tokenGenerator: () => claim.processingToken,
+  });
+
+  assert.equal(await handler(job), "ACK");
+  const responseFailure = captured.events.find(
+    ({ fields }) => fields.event === "bedrock_response_invalid",
+  );
+  assert.equal(responseFailure?.fields.statementId, statementId);
+  assert.equal(responseFailure?.fields.stage, "ocr");
+  assert.equal(responseFailure?.fields.errorCode, "InvalidOcrResponseError");
+  assert.equal(responseFailure?.fields.disposition, "PERMANENT");
+  assert.equal(responseFailure?.fields.modelId, "test-model");
+  assert.equal(
+    JSON.stringify(captured.events).includes("raw model response"),
+    false,
+  );
 });
 
 test("Analyze Job HandlerはAbortErrorでFAILEDにせず再試行する", async () => {
