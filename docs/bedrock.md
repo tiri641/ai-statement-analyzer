@@ -149,3 +149,17 @@ BEDROCK_OCR_MODEL_ID=jp.amazon.nova-2-lite-v1:0 npm run bedrock:ocr:smoke
 ```
 
 スモークコマンドは件数とtoken usageだけを構造化ログへ出し、OCR結果のmerchantや金額、画像本体を出力しない。実行には、ローカル認証情報、対象Region、Bedrockモデルアクセス、`bedrock:InvokeModel`権限が必要である。
+
+## Phase 11 Insights Adapter
+
+`BedrockInsightsAnalyzer`は、Phase 10のcompact Analytics DTOをテキストとしてConverseへ渡し、`generate_spending_insights` Toolを強制選択させる。画像や全取引明細は渡さない。
+
+Tool入力は次のtypeだけを許可する。
+
+- `CATEGORY_INCREASE`
+- `MERCHANT_INCREASE`
+- `NOTABLE_SPENDING`
+
+AWSのStructured Outputsやstrict Tool Useの対応はモデルごとに異なるため、実装開始時に対象モデルの公式仕様を確認する。Phase 11のアプリケーション境界では、BedrockのTool schemaに加えてZodとAnalytics参照検証を必ず実行する。
+
+Bedrockの応答がTool Useでない、Tool名が異なる、入力が不正、Analyticsに存在しないcategory・merchantを参照する場合は`InvalidInsightsResponseError`として扱い、cacheしない。SDKの一時的な通信RetryはAWS SDKの`maxAttempts=3`に任せ、API処理の失敗は`503 INSIGHTS_UNAVAILABLE`へ変換する。

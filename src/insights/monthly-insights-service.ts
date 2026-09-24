@@ -1,0 +1,185 @@
+import {
+  buildMonthlyAnalytics,
+  getMonthlyAnalyticsRanges,
+  type MonthlyAnalyticsAggregates,
+} from "../analytics/monthly-analytics.js";
+import type {
+  MonthlyInsightsCacheLookup,
+  MonthlyInsightsCacheLockProvider,
+  MonthlyInsightsCacheSession,
+  MonthlyInsightsCacheRecord,
+} from "../database/statement-repository.js";
+import type {
+  BedrockInsightsAnalyzer,
+  InsightsAnalyzeOptions,
+  InsightsAnalysisResult,
+} from "../ai/bedrock-insights.js";
+import {
+  createCompactInsightsInput,
+  getAnalyticsFingerprint,
+  InvalidInsightsResponseError,
+  parseAndValidateInsights,
+  type CompactInsightsInput,
+  type InsightsDocument,
+  type Insight,
+} from "./monthly-insights.js";
+
+export const MONTHLY_INSIGHTS_GENERATION_TIMEOUT_MILLIS = 30_000;
+
+export interface MonthlyInsightsAnalyticsStore {
+  findMonthlyAnalytics(
+    ranges: ReturnType<typeof getMonthlyAnalyticsRanges>,
+  ): Promise<MonthlyAnalyticsAggregates>;
+}
+
+export interface MonthlyInsightsCache
+  extends MonthlyInsightsCacheSession,
+    MonthlyInsightsCacheLockProvider {}
+
+export interface MonthlyInsightsAnalyzer {
+  analyze(
+    input: CompactInsightsInput,
+    options?: InsightsAnalyzeOptions,
+  ): Promise<InsightsAnalysisResult>;
+}
+
+export interface MonthlyInsightsResponse {
+  year: number;
+  month: number;
+  insights: Insight[];
+  generatedAt: string;
+  cached: boolean;
+}
+
+export interface MonthlyInsightsServiceOptions {
+  analytics: MonthlyInsightsAnalyticsStore;
+  cache: MonthlyInsightsCache;
+  analyzer: MonthlyInsightsAnalyzer;
+  modelId: string;
+  promptVersion: string;
+  now?: () => Date;
+}
+
+export class MonthlyInsightsService {
+  private readonly analytics: MonthlyInsightsAnalyticsStore;
+  private readonly cache: MonthlyInsightsCache;
+  private readonly analyzer: MonthlyInsightsAnalyzer;
+  private readonly modelId: string;
+  private readonly promptVersion: string;
+  private readonly now: () => Date;
+
+  public constructor(options: MonthlyInsightsServiceOptions) {
+    this.analytics = options.analytics;
+    this.cache = options.cache;
+    this.analyzer = options.analyzer;
+    this.modelId = options.modelId;
+    this.promptVersion = options.promptVersion;
+    this.now = options.now ?? (() => new Date());
+  }
+
+  public async getMonthlyInsights(
+    year: number,
+    month: number,
+  ): Promise<MonthlyInsightsResponse> {
+    const ranges = getMonthlyAnalyticsRanges(year, month);
+    const aggregates = await this.analytics.findMonthlyAnalytics(ranges);
+    const analytics = buildMonthlyAnalytics(
+      year,
+      month,
+      aggregates.current,
+      aggregates.previous,
+    );
+    const input = createCompactInsightsInput(analytics);
+    const lookup: MonthlyInsightsCacheLookup = {
+      targetMonth: ranges.current.start,
+      analyticsVersion: getAnalyticsFingerprint(input),
+      modelId: this.modelId,
+      promptVersion: this.promptVersion,
+    };
+    const cachedResponse = this.getCachedResponse(
+      year,
+      month,
+      input,
+      await this.cache.findMonthlyInsights(lookup),
+    );
+
+    if (cachedResponse) {
+      return cachedResponse;
+    }
+
+    const lockKey = [lookup.targetMonth, lookup.modelId, lookup.promptVersion].join(
+      ":",
+    );
+
+    return this.cache.withMonthlyInsightsGenerationLock(
+      lockKey,
+      async (lockedCache) => {
+        const lockedCachedResponse = this.getCachedResponse(
+          year,
+          month,
+          input,
+          await lockedCache.findMonthlyInsights(lookup),
+        );
+
+        if (lockedCachedResponse) {
+          return lockedCachedResponse;
+        }
+
+        const generated = await this.analyzer.analyze(input, {
+          signal: AbortSignal.timeout(MONTHLY_INSIGHTS_GENERATION_TIMEOUT_MILLIS),
+        });
+        const validated = parseAndValidateInsights(
+          { insights: generated.insights },
+          input,
+        );
+        const generatedAt = this.now();
+
+        await lockedCache.saveMonthlyInsights({
+          ...lookup,
+          insights: validated,
+          generatedAt,
+        });
+
+        return this.toResponse(year, month, validated, generatedAt, false);
+      },
+    );
+  }
+
+  private getCachedResponse(
+    year: number,
+    month: number,
+    input: CompactInsightsInput,
+    cached: MonthlyInsightsCacheRecord | null,
+  ): MonthlyInsightsResponse | null {
+    if (!cached) {
+      return null;
+    }
+
+    try {
+      const validated = parseAndValidateInsights(cached.insights, input);
+      return this.toResponse(year, month, validated, cached.generatedAt, true);
+    } catch (error) {
+      if (!(error instanceof InvalidInsightsResponseError)) {
+        throw error;
+      }
+
+      return null;
+    }
+  }
+
+  private toResponse(
+    year: number,
+    month: number,
+    document: InsightsDocument,
+    generatedAt: Date,
+    cached: boolean,
+  ): MonthlyInsightsResponse {
+    return {
+      year,
+      month,
+      insights: document.insights,
+      generatedAt: generatedAt.toISOString(),
+      cached,
+    };
+  }
+}

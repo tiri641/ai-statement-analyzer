@@ -6,13 +6,20 @@ import path from "node:path";
 import "dotenv/config";
 import { Pool } from "pg";
 import { runMigrations } from "../src/database/migrate.ts";
-import { getMonthlyAnalyticsRanges } from "../src/analytics/monthly-analytics.ts";
+import {
+  getMonthlyAnalyticsRanges,
+  type MonthlyAnalyticsAggregate,
+} from "../src/analytics/monthly-analytics.ts";
 import {
   StatementRepository,
   normalizeTargetMonth,
   type StatementStatus,
 } from "../src/database/statement-repository.ts";
 import type { AnalyzeFailureCode } from "../src/worker/analyze-job-error.ts";
+import {
+  MonthlyInsightsService,
+  type MonthlyInsightsAnalyzer,
+} from "../src/insights/monthly-insights-service.ts";
 
 test("targetMonthを月初の日付へ正規化する", () => {
   assert.equal(normalizeTargetMonth("2026-08"), "2026-08-01");
@@ -53,7 +60,7 @@ beforeEach(async () => {
     return;
   }
 
-  await pool.query("TRUNCATE transactions, statements CASCADE");
+  await pool.query("TRUNCATE monthly_insights, transactions, statements CASCADE");
 });
 
 after(async () => {
@@ -72,7 +79,7 @@ databaseTest("Migrationを再実行してもエラーにならない", async () 
     `,
   );
 
-  assert.equal(result.rows[0]?.count, "4");
+  assert.equal(result.rows[0]?.count, "5");
 });
 
 databaseTest("月別・日付・merchant・category用のIndexが作成される", async () => {
@@ -1089,4 +1096,104 @@ databaseTest("Monthly AnalyticsはCOMPLETEDと取引日の半開区間だけを�
       merchants: [{ name: "カフェ", amount: 50, count: 1 }],
     },
   });
+});
+
+databaseTest("monthly_insightsは対象月とversionが一致したcacheだけを返す", async () => {
+  assert.ok(repository);
+
+  const generatedAt = new Date("2026-09-25T03:00:00.000Z");
+  const cache = {
+    targetMonth: "2026-08-01",
+    analyticsVersion: "monthly-analytics-v1:hash",
+    modelId: "insights-model",
+    promptVersion: "v1",
+    insights: {
+      insights: [
+        {
+          type: "NOTABLE_SPENDING" as const,
+          severity: "info" as const,
+          title: "注目支出",
+          description: "食費の支出が目立ちます。",
+          category: "食費",
+        },
+      ],
+    },
+    generatedAt,
+  };
+
+  await repository.saveMonthlyInsights(cache);
+
+  const hit = await repository.findMonthlyInsights({
+    targetMonth: cache.targetMonth,
+    analyticsVersion: cache.analyticsVersion,
+    modelId: cache.modelId,
+    promptVersion: cache.promptVersion,
+  });
+  const fingerprintMiss = await repository.findMonthlyInsights({
+    targetMonth: cache.targetMonth,
+    analyticsVersion: "monthly-analytics-v1:other-hash",
+    modelId: cache.modelId,
+    promptVersion: cache.promptVersion,
+  });
+
+  assert.deepEqual(hit, cache);
+  assert.equal(fingerprintMiss, null);
+});
+
+databaseTest("同時cache missでも同じ対象月のBedrock生成を1回に直列化する", async () => {
+  assert.ok(repository);
+
+  const current: MonthlyAnalyticsAggregate = {
+    totalAmount: 100,
+    transactionCount: 1,
+    categories: [{ name: "食費", amount: 100, count: 1 }],
+    merchants: [{ name: "カフェ", amount: 100, count: 1 }],
+  };
+  const previous: MonthlyAnalyticsAggregate = {
+    totalAmount: 50,
+    transactionCount: 1,
+    categories: [{ name: "食費", amount: 50, count: 1 }],
+    merchants: [{ name: "カフェ", amount: 50, count: 1 }],
+  };
+  let analyzeCalls = 0;
+  const analyzer: MonthlyInsightsAnalyzer = {
+    analyze: async () => {
+      analyzeCalls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return {
+        insights: [
+          {
+            type: "CATEGORY_INCREASE" as const,
+            severity: "warning" as const,
+            title: "食費が増えています",
+            description: "食費が前月から100%増加しています。",
+            category: "食費",
+          },
+        ],
+        usage: null,
+      };
+    },
+  };
+  const createService = () =>
+    new MonthlyInsightsService({
+      analytics: {
+        findMonthlyAnalytics: async () => ({ current, previous }),
+      },
+      cache: repository,
+      analyzer,
+      modelId: "insights-model",
+      promptVersion: "v1",
+      now: () => new Date("2026-09-25T03:00:00.000Z"),
+    });
+
+  const results = await Promise.all([
+    createService().getMonthlyInsights(2026, 8),
+    createService().getMonthlyInsights(2026, 8),
+  ]);
+
+  assert.equal(analyzeCalls, 1);
+  assert.deepEqual(
+    results.map((result) => result.cached).sort(),
+    [false, true],
+  );
 });

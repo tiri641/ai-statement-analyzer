@@ -10,7 +10,7 @@
 | GET | /statements/{id} | statusを取得 | Phase 3 |
 | GET | /transactions?year&month | 完了済み取引を取得 | Phase 10以降 |
 | GET | /analytics/monthly?year&month | SQL Analyticsを取得 | Phase 10 |
-| GET | /analytics/monthly/insights?year&month | cacheまたはBedrock Insightsを取得 | Phase 11以降 |
+| GET | /analytics/monthly/insights?year&month | cacheまたはBedrock Insightsを取得 | Phase 11 |
 
 画像本体はAPIへ送らない。Insightsは数値Analyticsと分離し、Bedrock unavailableでも数値Dashboardを表示する。
 

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Pool, PoolClient } from "pg";
+import type { Pool, PoolClient, QueryConfig } from "pg";
 import {
   ProcessingClaimLostError,
   UniqueConstraintError,
@@ -11,6 +11,7 @@ import type {
   MonthlyAnalyticsAggregates,
   MonthlyAnalyticsRanges,
 } from "../analytics/monthly-analytics.js";
+import type { InsightsDocument } from "../insights/monthly-insights.js";
 
 export const STATEMENT_STATUSES = [
   "UPLOAD_PENDING",
@@ -35,6 +36,7 @@ export const STATEMENT_FAILURE_CODES = [
 export type StatementFailureCode = (typeof STATEMENT_FAILURE_CODES)[number];
 
 export const DEFAULT_PROCESSING_LEASE_SECONDS = 10 * 60;
+export const MONTHLY_INSIGHTS_LOCK_WAIT_TIMEOUT_MILLIS = 35_000;
 
 export interface CreateStatementInput {
   id?: string;
@@ -78,6 +80,37 @@ export interface TransactionRecord extends CreateTransactionInput {
   id: number;
   statementId: string;
   createdAt: Date;
+}
+
+export interface MonthlyInsightsCacheLookup {
+  targetMonth: string;
+  analyticsVersion: string;
+  modelId: string;
+  promptVersion: string;
+}
+
+export interface MonthlyInsightsCacheRecord extends MonthlyInsightsCacheLookup {
+  insights: unknown;
+  generatedAt: Date;
+}
+
+export interface SaveMonthlyInsightsInput extends MonthlyInsightsCacheLookup {
+  insights: InsightsDocument;
+  generatedAt: Date;
+}
+
+export interface MonthlyInsightsCacheSession {
+  findMonthlyInsights(
+    lookup: MonthlyInsightsCacheLookup,
+  ): Promise<MonthlyInsightsCacheRecord | null>;
+  saveMonthlyInsights(input: SaveMonthlyInsightsInput): Promise<void>;
+}
+
+export interface MonthlyInsightsCacheLockProvider {
+  withMonthlyInsightsGenerationLock<T>(
+    lockKey: string,
+    callback: (cache: MonthlyInsightsCacheSession) => Promise<T>,
+  ): Promise<T>;
 }
 
 export interface ProcessingClaim {
@@ -158,6 +191,15 @@ interface AnalyticsBucketDatabaseRow {
   name: string;
   amount: string;
   count: string;
+}
+
+interface MonthlyInsightsDatabaseRow {
+  target_month: string;
+  analytics_version: string;
+  model_id: string;
+  prompt_version: string;
+  insights: unknown;
+  generated_at: Date;
 }
 
 export function normalizeTargetMonth(value: string): string {
@@ -257,10 +299,12 @@ function isUniqueViolation(error: unknown): boolean {
 async function rollbackTransaction(
   client: PoolClient,
   originalError: unknown,
+  onRollbackFailure?: (rollbackError: unknown) => void,
 ): Promise<never> {
   try {
     await client.query("ROLLBACK");
   } catch (rollbackError) {
+    onRollbackFailure?.(rollbackError);
     throw new AggregateError(
       [originalError, rollbackError],
       "DB TransactionとRollbackの両方に失敗しました",
@@ -583,6 +627,146 @@ export class StatementRepository {
       categories: categories.rows.map(mapAnalyticsBucket),
       merchants: merchants.rows.map(mapAnalyticsBucket),
     };
+  }
+
+  public async findMonthlyInsights(
+    lookup: MonthlyInsightsCacheLookup,
+  ): Promise<MonthlyInsightsCacheRecord | null> {
+    const client = await this.pool.connect();
+
+    try {
+      return await this.findMonthlyInsightsWithClient(client, lookup);
+    } finally {
+      client.release();
+    }
+  }
+
+  private async findMonthlyInsightsWithClient(
+    client: PoolClient,
+    lookup: MonthlyInsightsCacheLookup,
+  ): Promise<MonthlyInsightsCacheRecord | null> {
+    const result = await client.query<MonthlyInsightsDatabaseRow>(
+      `
+        SELECT
+          target_month::text,
+          analytics_version,
+          model_id,
+          prompt_version,
+          insights,
+          generated_at
+        FROM monthly_insights
+        WHERE target_month = $1::date
+          AND analytics_version = $2
+          AND model_id = $3
+          AND prompt_version = $4
+      `,
+      [
+        lookup.targetMonth,
+        lookup.analyticsVersion,
+        lookup.modelId,
+        lookup.promptVersion,
+      ],
+    );
+    const row = result.rows[0];
+
+    return row
+      ? {
+          targetMonth: row.target_month,
+          analyticsVersion: row.analytics_version,
+          modelId: row.model_id,
+          promptVersion: row.prompt_version,
+          insights: row.insights,
+          generatedAt: row.generated_at,
+        }
+      : null;
+  }
+
+  public async saveMonthlyInsights(
+    input: SaveMonthlyInsightsInput,
+  ): Promise<void> {
+    const client = await this.pool.connect();
+
+    try {
+      await this.saveMonthlyInsightsWithClient(client, input);
+    } finally {
+      client.release();
+    }
+  }
+
+  private async saveMonthlyInsightsWithClient(
+    client: PoolClient,
+    input: SaveMonthlyInsightsInput,
+  ): Promise<void> {
+    await client.query(
+      `
+        INSERT INTO monthly_insights (
+          target_month,
+          analytics_version,
+          model_id,
+          prompt_version,
+          insights,
+          generated_at
+        ) VALUES ($1::date, $2, $3, $4, $5::jsonb, $6)
+        ON CONFLICT (target_month) DO UPDATE
+        SET
+          analytics_version = EXCLUDED.analytics_version,
+          model_id = EXCLUDED.model_id,
+          prompt_version = EXCLUDED.prompt_version,
+          insights = EXCLUDED.insights,
+          generated_at = EXCLUDED.generated_at
+      `,
+      [
+        input.targetMonth,
+        input.analyticsVersion,
+        input.modelId,
+        input.promptVersion,
+        JSON.stringify(input.insights),
+        input.generatedAt,
+      ],
+    );
+  }
+
+  public async withMonthlyInsightsGenerationLock<T>(
+    lockKey: string,
+    callback: (cache: MonthlyInsightsCacheSession) => Promise<T>,
+  ): Promise<T> {
+    const client = await this.pool.connect();
+    let clientReleased = false;
+
+    try {
+      await client.query("BEGIN");
+      const lockQuery = {
+        text: "SELECT pg_advisory_xact_lock(hashtext($1))",
+        values: [lockKey],
+        query_timeout: MONTHLY_INSIGHTS_LOCK_WAIT_TIMEOUT_MILLIS,
+      } as QueryConfig & { query_timeout: number };
+      await client.query(lockQuery);
+
+      // Keep this transaction open while Bedrock runs so the lock covers the
+      // complete cache miss check, generation, and save sequence.
+      const result = await callback({
+        findMonthlyInsights: (lookup) =>
+          this.findMonthlyInsightsWithClient(client, lookup),
+        saveMonthlyInsights: (input) =>
+          this.saveMonthlyInsightsWithClient(client, input),
+      });
+
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      return await rollbackTransaction(client, error, (rollbackError) => {
+        clientReleased = true;
+        client.release(
+          rollbackError instanceof Error
+            ? rollbackError
+            : new Error(String(rollbackError)),
+        );
+      });
+    } finally {
+      if (!clientReleased) {
+        client.release();
+      }
+    }
   }
 
   public async saveTransactionsAndComplete(

@@ -1,8 +1,10 @@
 import "dotenv/config";
 import { serve } from "@hono/node-server";
 import { Pool } from "pg";
+import { BedrockInsightsAnalyzer } from "./ai/bedrock-insights.js";
 import { createApp } from "./app.js";
 import { StatementRepository } from "./database/statement-repository.js";
+import { MonthlyInsightsService } from "./insights/monthly-insights-service.js";
 import { isLoopbackHost } from "./server-safety.js";
 import { S3ObjectStore } from "./storage/s3-object-store.js";
 import { SqsJobQueue } from "./queue/sqs-job-queue.js";
@@ -13,6 +15,8 @@ const databaseUrl = process.env.DATABASE_URL;
 const awsRegion = process.env.AWS_REGION ?? "ap-northeast-1";
 const s3BucketName = process.env.S3_BUCKET_NAME;
 const sqsQueueUrl = process.env.SQS_QUEUE_URL;
+const insightsModelId = process.env.BEDROCK_INSIGHTS_MODEL_ID;
+const insightsPromptVersion = process.env.INSIGHTS_PROMPT_VERSION ?? "v1";
 const presignedUrlExpiresSeconds = Number(
   process.env.S3_PRESIGNED_URL_EXPIRES_SECONDS ?? "300",
 );
@@ -77,6 +81,18 @@ const pool = new Pool({
   query_timeout: 2_000,
 });
 const statements = new StatementRepository(pool);
+const monthlyInsights = insightsModelId
+  ? new MonthlyInsightsService({
+      analytics: statements,
+      cache: statements,
+      analyzer: new BedrockInsightsAnalyzer({
+        region: awsRegion,
+        modelId: insightsModelId,
+      }),
+      modelId: insightsModelId,
+      promptVersion: insightsPromptVersion,
+    })
+  : undefined;
 const app = createApp({
   database: pool,
   statements,
@@ -90,6 +106,7 @@ const app = createApp({
     region: awsRegion,
   }),
   presignedUrlExpiresSeconds,
+  ...(monthlyInsights ? { monthlyInsights } : {}),
 });
 const server = serve(
   {
