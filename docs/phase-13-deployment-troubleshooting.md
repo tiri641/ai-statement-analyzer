@@ -195,7 +195,7 @@ AWS RDS PostgreSQL:        DB_SSL=true
 
 #### 証明書検証
 
-RDSの`rds-ca-rsa2048-g1` Root CAを`rds-ca-rsa2048-g1.pem`としてImageへ含め、Node.jsの`NODE_EXTRA_CA_CERTS`で信頼ストアへ追加している。`DB_SSL=true`では`rejectUnauthorized: true`を使用するため、通信の暗号化だけでなくRDSサーバー証明書の検証も行う。CAを更新する場合は、AWS公式の東京リージョンCAバンドル（https://truststore.pki.rds.amazonaws.com/ap-northeast-1/ap-northeast-1-bundle.pem）から対象Root CAを更新し、Imageを再Buildする。
+RDSの`rds-ca-rsa2048-g1` Root CAを`rds-ca-rsa2048-g1.pem`としてImageへ含め、Node.jsの`NODE_EXTRA_CA_CERTS`で信頼ストアへ追加している。`DB_SSL=true`では`rejectUnauthorized: true`を使用するため、通信の暗号化だけでなくRDSサーバー証明書の検証も行う。現在のCAファイルは`ap-northeast-1`用であり、別リージョンへ展開する場合は対象リージョンのCAバンドルへ差し替えてImageをBuildする。CAを更新する場合は、AWS公式の東京リージョンCAバンドル（https://truststore.pki.rds.amazonaws.com/ap-northeast-1/ap-northeast-1-bundle.pem）から対象Root CAを更新し、Imageを再Buildする。
 
 ### 8. 全テスト実行時のDB統合テスト
 
