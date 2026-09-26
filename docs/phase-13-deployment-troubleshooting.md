@@ -239,10 +239,18 @@ AWS RDSに対してローカルから直接統合テストを行うのではな�
 このリポジトリではCDK CLIをプロジェクトの開発依存として管理しており、実行環境のPATHにグローバルの`cdk`コマンドが存在するとは限らない。リポジトリの依存関係を使って実行する。
 
 ```bash
+export AWS_REGION=ap-northeast-1
+aws sts get-caller-identity
+npx cdk list --region "$AWS_REGION"
+```
+
+表示されたStack名が削除対象と一致し、AWS CLIの認証済みアカウントとリージョンが意図した対象であることを確認する。確認後に、次のコマンドで削除する。
+
+```bash
 npx cdk destroy --all --force
 ```
 
-実行前に`npm install`または`npm ci`が完了していること、AWS CLIの認証済みアカウントとリージョンが意図した対象であることを確認する。
+実行前に`npm install`または`npm ci`が完了していることも確認する。`--force`は確認プロンプトを省略するため、Stack名・アカウント・リージョンの確認を省略してはならない。
 
 ### 2. DatabaseStackがRDSの最終スナップショット作成権限で失敗した
 
@@ -322,16 +330,32 @@ aws logs delete-log-group --log-group-name <application-log-group>
 他のアプリケーションStackや、同じアカウント・リージョンを使う別のCDKプロジェクトがないことを確認した場合だけ、次の順で削除する。アカウントやリージョンを取り違えると共有Bootstrapを破壊するため、削除前に次の条件を満たすことを確認する。
 
 ```bash
+set -euo pipefail
 export AWS_REGION=ap-northeast-1
 aws sts get-caller-identity
 
-# DELETE_COMPLETE以外のStackを全件確認する。
-# CDKToolkit以外が1件でも表示されたら、CDKToolkitを削除しない。
-aws cloudformation list-stacks \
-  --region "$AWS_REGION" \
-  --query 'StackSummaries[?StackStatus!=`DELETE_COMPLETE`].[StackName,StackStatus]' \
-  --output table
+EXPECTED_ACCOUNT_ID="replace-with-expected-account-id"
+ACTUAL_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+[ "$ACTUAL_ACCOUNT_ID" = "$EXPECTED_ACCOUNT_ID" ] || {
+  echo "AWS account mismatch; stop without deleting CDKToolkit" >&2
+  exit 1
+}
 
+# DELETE_COMPLETE以外のStackを確認し、CDKToolkit以外があれば自動中止する。
+NON_BOOTSTRAP_STACKS="$(aws cloudformation list-stacks \
+  --region "$AWS_REGION" \
+  --output json \
+  | jq '[.StackSummaries[] | select(.StackName != "CDKToolkit" and .StackStatus != "DELETE_COMPLETE") | {StackName, StackStatus}]')"
+[ "$NON_BOOTSTRAP_STACKS" = "[]" ] || {
+  printf '%s\n' "$NON_BOOTSTRAP_STACKS"
+  echo "another CloudFormation stack exists; stop without deleting CDKToolkit" >&2
+  exit 1
+}
+```
+
+上の確認が成功し、`CDKToolkit`だけを削除すると決めた場合に限り、別のブロックで削除を実行する。
+
+```bash
 aws cloudformation delete-stack --stack-name CDKToolkit --region "$AWS_REGION"
 aws cloudformation wait stack-delete-complete \
   --stack-name CDKToolkit --region "$AWS_REGION"
@@ -342,7 +366,8 @@ aws cloudformation wait stack-delete-complete \
 BootstrapのS3バケットにオブジェクトが残っている場合、`aws s3 rm --recursive`だけでは不十分なことがある。バージョニングされたバケットでは、古いオブジェクトバージョンとDelete Markerもすべて削除してから、バケットを削除する。
 
 ```bash
-export CDK_BOOTSTRAP_BUCKET=<cdk-bootstrap-bucket>
+set -euo pipefail
+export CDK_BOOTSTRAP_BUCKET="replace-with-exact-cdk-bootstrap-bucket"
 
 # jqが必要。VersionsとDeleteMarkersを全件取得し、空になるまで繰り返す。
 while true; do
@@ -358,11 +383,14 @@ while true; do
     --delete "$delete_payload"
 done
 
-aws s3api list-object-versions \
+remaining_count="$(aws s3api list-object-versions \
   --bucket "$CDK_BOOTSTRAP_BUCKET" \
   --region "$AWS_REGION" \
-  --query '{Versions: Versions, DeleteMarkers: DeleteMarkers}' \
-  --output json
+  --output json | jq '((.Versions // []) + (.DeleteMarkers // []) | length)')"
+[ "$remaining_count" -eq 0 ] || {
+  echo "CDK bootstrap bucket is not empty; stop without deleting the bucket" >&2
+  exit 1
+}
 aws s3api delete-bucket --bucket "$CDK_BOOTSTRAP_BUCKET" --region "$AWS_REGION"
 ```
 
@@ -370,35 +398,59 @@ aws s3api delete-bucket --bucket "$CDK_BOOTSTRAP_BUCKET" --region "$AWS_REGION"
 
 ### 5. destroy後の課金確認
 
-削除完了後は、CloudFormationのStackだけでなく、次の残存リソースを確認する。AWS CLIの確認は対象リージョンごとに行い、S3とCost Explorerはアカウント全体の状態も確認する。検索結果が空であることと、Cost Explorerで継続的な利用が発生していないことを別々に確認する。
+削除完了後は、CloudFormationのStackだけでなく、Phase 13で作成したリソースが残っていないことを確認する。共有アカウントでは、アカウント全体のS3、Secret、SNS Topic、ENIなどが空であることを成功条件にしない。Stack名、リソース名、対象VPC ID、ロググループPrefixなど、削除前に記録したPhase 13固有の識別子で絞り込む。AWS CLIの確認は対象リージョンごとに行い、Cost Explorerはアカウント全体の利用額を確認する。
 
 ```bash
+set -euo pipefail
 export AWS_REGION=ap-northeast-1
+export APPLICATION_BUCKET="replace-with-phase13-bucket"
+export APPLICATION_REPOSITORY="ai-statement-analyzer"
+export APPLICATION_VPC_ID="replace-with-phase13-vpc-id"
+export APPLICATION_RESOURCE_PREFIX="replace-with-phase13-resource-prefix"
+export APPLICATION_LOG_PREFIX="/ai-statement-analyzer/"
+export APPLICATION_SECRET_PREFIX="replace-with-phase13-secret-prefix"
+export APPLICATION_QUEUE_PREFIX="replace-with-phase13-queue-prefix"
+export APPLICATION_DB_INSTANCE_ID="replace-with-phase13-db-instance-id"
+export APPLICATION_DB_SNAPSHOT_PREFIX="replace-with-phase13-db-snapshot-prefix"
 aws sts get-caller-identity
 aws cloudformation list-stacks --region "$AWS_REGION" \
   --query 'StackSummaries[?StackStatus!=`DELETE_COMPLETE`].[StackName,StackStatus]' \
   --output table
-aws s3api list-buckets --query 'Buckets[].Name' --output table
-aws ecr describe-repositories --region "$AWS_REGION" --output table
-aws rds describe-db-instances --region "$AWS_REGION" --output table
-aws rds describe-db-snapshots --region "$AWS_REGION" --snapshot-type manual --output table
-aws rds describe-db-cluster-snapshots --region "$AWS_REGION" --snapshot-type manual --output table
+aws s3api list-buckets --output json \
+  | jq --arg bucket "$APPLICATION_BUCKET" '[.Buckets[] | select(.Name == $bucket)] | .[].Name'
+aws ecr describe-repositories --region "$AWS_REGION" --output json \
+  | jq --arg name "$APPLICATION_REPOSITORY" '[.repositories[] | select(.repositoryName == $name)]'
+aws rds describe-db-instances --region "$AWS_REGION" --output json \
+  | jq --arg id "$APPLICATION_DB_INSTANCE_ID" '[.DBInstances[] | select(.DBInstanceIdentifier == $id)]'
+aws rds describe-db-snapshots --region "$AWS_REGION" --snapshot-type manual --output json \
+  | jq --arg prefix "$APPLICATION_DB_SNAPSHOT_PREFIX" '[.DBSnapshots[] | select(.DBSnapshotIdentifier | startswith($prefix))]'
+aws rds describe-db-cluster-snapshots --region "$AWS_REGION" --snapshot-type manual --output json \
+  | jq --arg prefix "$APPLICATION_DB_SNAPSHOT_PREFIX" '[.DBClusterSnapshots[] | select(.DBClusterSnapshotIdentifier | startswith($prefix))]'
 aws ec2 describe-nat-gateways --region "$AWS_REGION" \
+  --filter Name=vpc-id,Values="$APPLICATION_VPC_ID" \
   --filter Name=state,Values=pending,available,deleting --output table
-aws ec2 describe-addresses --region "$AWS_REGION" --output table
-aws ec2 describe-vpc-endpoints --region "$AWS_REGION" --output table
-aws ec2 describe-network-interfaces --region "$AWS_REGION" --output table
-aws ecs list-clusters --region "$AWS_REGION" --output table
-aws elbv2 describe-load-balancers --region "$AWS_REGION" --output table
+aws ec2 describe-vpc-endpoints --region "$AWS_REGION" \
+  --filters Name=vpc-id,Values="$APPLICATION_VPC_ID" --output table
+aws ec2 describe-network-interfaces --region "$AWS_REGION" \
+  --filters Name=vpc-id,Values="$APPLICATION_VPC_ID" --output table
+aws ecs list-clusters --region "$AWS_REGION" --output json \
+  | jq --arg prefix "$APPLICATION_RESOURCE_PREFIX" '[.clusterArns[] | select(startswith($prefix))]'
+aws elbv2 describe-load-balancers --region "$AWS_REGION" --output json \
+  | jq --arg prefix "$APPLICATION_RESOURCE_PREFIX" '[.LoadBalancers[] | select(.LoadBalancerName | startswith($prefix))]'
 aws logs describe-log-groups --region "$AWS_REGION" \
-  --log-group-name-prefix /ai-statement-analyzer/ --output table
+  --log-group-name-prefix "$APPLICATION_LOG_PREFIX" --output table
 aws secretsmanager list-secrets --region "$AWS_REGION" \
-  --query 'SecretList[].Name' --output table
-aws sqs list-queues --region "$AWS_REGION" --output table
-aws sns list-topics --region "$AWS_REGION" --output table
+  --output json \
+  | jq --arg prefix "$APPLICATION_SECRET_PREFIX" '[.SecretList[] | select(.Name | startswith($prefix)) | .Name]'
+aws sqs list-queues --region "$AWS_REGION" \
+  --queue-name-prefix "$APPLICATION_QUEUE_PREFIX" --output table
+aws sns list-topics --region "$AWS_REGION" --output json \
+  | jq --arg prefix "$APPLICATION_RESOURCE_PREFIX" '[.Topics[] | select(.TopicArn | contains($prefix)) | .TopicArn]'
 ```
 
-Cost Explorerには反映遅延があるため、destroy直後に過去の利用料金が消えるわけではない。今回も削除後の継続リソースは確認されなかったが、実行期間中のS3、Bedrock、Secrets Managerなどの利用料金は履歴として残る。最終確認では、対象リージョンのリソース一覧が空であること、当日以降に新しい利用が増えていないことを時間を置いて確認する。
+上記の`replace-with-*`は、削除前に記録した実際の識別子へ置き換える。CloudFormation、ECR、RDS、ECS、ALBについても、Phase 13のStack名・リソース名・タグで対象を限定し、共有アカウントの無関係なリソースは削除も失敗判定もしない。
+
+Cost Explorerには反映遅延があるため、destroy直後に過去の利用料金が消えるわけではない。今回も削除後の継続リソースは確認されなかったが、実行期間中のS3、Bedrock、Secrets Managerなどの利用料金は履歴として残る。最終確認では、Phase 13対象のリソース一覧が空であること、当日以降に新しい利用が増えていないことを時間を置いて確認する。
 
 ## デプロイ時点の最終確認結果
 
