@@ -14,6 +14,11 @@ import type {
   InsightsAnalyzeOptions,
   InsightsAnalysisResult,
 } from "../ai/bedrock-insights.js";
+import { classifyBedrockError } from "../ai/bedrock-ocr.js";
+import {
+  createStructuredLogger,
+  type StructuredLogger,
+} from "../observability/logger.js";
 import {
   createCompactInsightsInput,
   getAnalyticsFingerprint,
@@ -51,6 +56,10 @@ export interface MonthlyInsightsResponse {
   cached: boolean;
 }
 
+export interface MonthlyInsightsRequestOptions {
+  requestId?: string;
+}
+
 export interface MonthlyInsightsServiceOptions {
   analytics: MonthlyInsightsAnalyticsStore;
   cache: MonthlyInsightsCache;
@@ -58,6 +67,7 @@ export interface MonthlyInsightsServiceOptions {
   modelId: string;
   promptVersion: string;
   now?: () => Date;
+  logger?: StructuredLogger;
 }
 
 export class MonthlyInsightsService {
@@ -67,6 +77,7 @@ export class MonthlyInsightsService {
   private readonly modelId: string;
   private readonly promptVersion: string;
   private readonly now: () => Date;
+  private readonly logger: StructuredLogger;
 
   public constructor(options: MonthlyInsightsServiceOptions) {
     this.analytics = options.analytics;
@@ -75,12 +86,16 @@ export class MonthlyInsightsService {
     this.modelId = options.modelId;
     this.promptVersion = options.promptVersion;
     this.now = options.now ?? (() => new Date());
+    this.logger =
+      options.logger ?? createStructuredLogger({ service: "api" });
   }
 
   public async getMonthlyInsights(
     year: number,
     month: number,
+    options: MonthlyInsightsRequestOptions = {},
   ): Promise<MonthlyInsightsResponse> {
+    const requestId = options.requestId;
     const ranges = getMonthlyAnalyticsRanges(year, month);
     const aggregates = await this.analytics.findMonthlyAnalytics(ranges);
     const analytics = buildMonthlyAnalytics(
@@ -104,8 +119,27 @@ export class MonthlyInsightsService {
     );
 
     if (cachedResponse) {
+      this.logger.info({
+        event: "monthly_insights_cache_hit",
+        ...(requestId ? { requestId } : {}),
+        status: "completed",
+        targetMonth: lookup.targetMonth,
+        modelId: this.modelId,
+        promptVersion: this.promptVersion,
+        cached: true,
+      });
       return cachedResponse;
     }
+
+    this.logger.info({
+      event: "monthly_insights_cache_miss",
+      ...(requestId ? { requestId } : {}),
+      status: "started",
+      targetMonth: lookup.targetMonth,
+      modelId: this.modelId,
+      promptVersion: this.promptVersion,
+      cached: false,
+    });
 
     const lockKey = [lookup.targetMonth, lookup.modelId, lookup.promptVersion].join(
       ":",
@@ -122,16 +156,77 @@ export class MonthlyInsightsService {
         );
 
         if (lockedCachedResponse) {
+          this.logger.info({
+            event: "monthly_insights_cache_hit",
+            ...(requestId ? { requestId } : {}),
+            status: "completed",
+            targetMonth: lookup.targetMonth,
+            modelId: this.modelId,
+            promptVersion: this.promptVersion,
+            cached: true,
+          });
           return lockedCachedResponse;
         }
 
-        const generated = await this.analyzer.analyze(input, {
-          signal: AbortSignal.timeout(MONTHLY_INSIGHTS_GENERATION_TIMEOUT_MILLIS),
-        });
-        const validated = parseAndValidateInsights(
-          { insights: generated.insights },
-          input,
-        );
+        const bedrockStartedAt = Date.now();
+        let generated: InsightsAnalysisResult;
+        try {
+          generated = await this.analyzer.analyze(input, {
+            signal: AbortSignal.timeout(
+              MONTHLY_INSIGHTS_GENERATION_TIMEOUT_MILLIS,
+            ),
+          });
+        } catch (error) {
+          if (error instanceof InvalidInsightsResponseError) {
+            this.logger.error({
+              event: "bedrock_response_invalid",
+              ...(requestId ? { requestId } : {}),
+              status: "failed",
+              stage: "insights",
+              modelId: this.modelId,
+              promptVersion: this.promptVersion,
+              errorCode: "INVALID_INSIGHTS_RESPONSE",
+              disposition: "PERMANENT",
+              durationMs: Date.now() - bedrockStartedAt,
+            });
+          } else {
+            this.logger.error({
+              event: "bedrock_request_failed",
+              ...(requestId ? { requestId } : {}),
+              status: "failed",
+              stage: "insights",
+              modelId: this.modelId,
+              promptVersion: this.promptVersion,
+              errorCode: getSafeErrorCode(error),
+              disposition: classifyBedrockError(error),
+              durationMs: Date.now() - bedrockStartedAt,
+            });
+          }
+          throw error;
+        }
+
+        let validated: InsightsDocument;
+        try {
+          validated = parseAndValidateInsights(
+            { insights: generated.insights },
+            input,
+          );
+        } catch (error) {
+          if (error instanceof InvalidInsightsResponseError) {
+            this.logger.error({
+              event: "bedrock_response_invalid",
+              ...(requestId ? { requestId } : {}),
+              status: "failed",
+              stage: "insights",
+              modelId: this.modelId,
+              promptVersion: this.promptVersion,
+              errorCode: "INVALID_INSIGHTS_RESPONSE",
+              disposition: "PERMANENT",
+              durationMs: Date.now() - bedrockStartedAt,
+            });
+          }
+          throw error;
+        }
         const generatedAt = this.now();
 
         await lockedCache.saveMonthlyInsights({
@@ -182,4 +277,21 @@ export class MonthlyInsightsService {
       cached,
     };
   }
+}
+
+function getSafeErrorCode(error: unknown): string {
+  if (typeof error !== "object" || error === null) {
+    return "UNKNOWN_ERROR";
+  }
+
+  const candidate = error as { name?: unknown; code?: unknown };
+  if (typeof candidate.name === "string" && candidate.name.length > 0) {
+    return candidate.name;
+  }
+
+  if (typeof candidate.code === "string" && candidate.code.length > 0) {
+    return candidate.code;
+  }
+
+  return "UNKNOWN_ERROR";
 }

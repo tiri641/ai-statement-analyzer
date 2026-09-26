@@ -3,6 +3,9 @@
   "context": {
     "region": "ap-northeast-1",
     "frontendOrigin": "http://localhost:5173",
-    "rawRetentionDays": 7
+    "rawRetentionDays": 7,
+    "observabilityOldestMessageAgeSeconds": 600,
+    "observabilityWorkerErrorThreshold": 3,
+    "observabilityBedrockErrorThreshold": 3
   }
 }

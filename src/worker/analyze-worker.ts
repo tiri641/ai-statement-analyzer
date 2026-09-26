@@ -3,16 +3,18 @@ import {
   type AnalyzeJobQueue,
   type ReceivedAnalyzeJob,
 } from "../queue/analyze-job.js";
+import {
+  createStructuredLogger,
+  type StructuredLogger,
+} from "../observability/logger.js";
+import { getAnalyzeJobErrorStage } from "./analyze-job-error.js";
 
 const INITIAL_RECEIVE_BACKOFF_MS = 1_000;
 const MAX_RECEIVE_BACKOFF_MS = 30_000;
 const RECEIVE_BACKOFF_MULTIPLIER = 2;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 30_000;
 
-export interface WorkerLogger {
-  info(fields: Record<string, unknown>): void;
-  error(fields: Record<string, unknown>): void;
-}
+export type WorkerLogger = StructuredLogger;
 
 export interface AnalyzeJobHandlerOptions {
   signal: AbortSignal;
@@ -37,10 +39,9 @@ export interface WorkerSignalEmitter {
   once(signal: "SIGTERM" | "SIGINT", listener: () => void): unknown;
 }
 
-const defaultLogger: WorkerLogger = {
-  info: (fields) => console.log(JSON.stringify(fields)),
-  error: (fields) => console.error(JSON.stringify(fields)),
-};
+const defaultLogger: WorkerLogger = createStructuredLogger({
+  service: "worker",
+});
 
 type ShutdownOperationResult<T> =
   | { status: "COMPLETED"; value: T }
@@ -97,13 +98,13 @@ export class AnalyzeWorker {
     this.activeHandlerAbortController?.abort();
     this.shutdownAbortController.abort();
     this.resolveShutdown();
-    this.logger.info({ event: "worker_shutdown_requested" });
+    this.logger.info({ event: "worker_shutdown_requested", status: "requested" });
   }
 
   public async run(): Promise<void> {
     let receiveBackoffMs = INITIAL_RECEIVE_BACKOFF_MS;
 
-    this.logger.info({ event: "worker_started" });
+    this.logger.info({ event: "worker_started", status: "started" });
 
     while (!this.shutdownRequested) {
       const controller = new AbortController();
@@ -124,7 +125,12 @@ export class AnalyzeWorker {
             ? "worker_message_invalid"
             : "worker_receive_failed";
 
-        this.logger.error({ event, errorCode });
+        this.logger.error({
+          event,
+          errorCode,
+          status: "failed",
+          disposition: event === "worker_receive_failed" ? "RETRYABLE" : "PERMANENT",
+        });
 
         if (event === "worker_receive_failed") {
           await this.waitForRetry(receiveBackoffMs);
@@ -144,11 +150,17 @@ export class AnalyzeWorker {
       receiveBackoffMs = INITIAL_RECEIVE_BACKOFF_MS;
 
       if (job) {
+        this.logger.info({
+          event: "worker_message_received",
+          messageId: job.messageId,
+          statementId: job.statementId,
+          receiveCount: job.receiveCount,
+        });
         await this.processJob(job);
       }
     }
 
-    this.logger.info({ event: "worker_stopped" });
+    this.logger.info({ event: "worker_stopped", status: "stopped" });
   }
 
   private async waitForRetry(milliseconds: number): Promise<void> {
@@ -229,6 +241,7 @@ export class AnalyzeWorker {
       messageId: job.messageId,
       statementId: job.statementId,
       receiveCount: job.receiveCount,
+      status: "started",
     });
 
     let handlerResult: ShutdownOperationResult<void | AnalyzeJobDisposition>;
@@ -250,7 +263,10 @@ export class AnalyzeWorker {
         messageId: job.messageId,
         statementId: job.statementId,
         receiveCount: job.receiveCount,
+        stage: getAnalyzeJobErrorStage(handlerResult.error) ?? "unknown",
         errorCode: getErrorCode(handlerResult.error),
+        status: "failed",
+        disposition: "RETRYABLE",
         durationMs: Date.now() - startedAt,
       });
       return;
@@ -264,6 +280,8 @@ export class AnalyzeWorker {
         statementId: job.statementId,
         receiveCount: job.receiveCount,
         errorCode: "SHUTDOWN_TIMEOUT",
+        status: "failed",
+        disposition: "RETRYABLE",
         durationMs: Date.now() - startedAt,
       });
       return;
@@ -271,10 +289,12 @@ export class AnalyzeWorker {
 
     if (handlerResult.value === "RETRY") {
       this.logger.info({
-        event: "worker_job_deferred",
+        event: "worker_job_retry",
         messageId: job.messageId,
         statementId: job.statementId,
         receiveCount: job.receiveCount,
+        status: "retry",
+        disposition: "RETRYABLE",
         durationMs: Date.now() - startedAt,
       });
       return;
@@ -292,7 +312,10 @@ export class AnalyzeWorker {
         messageId: job.messageId,
         statementId: job.statementId,
         receiveCount: job.receiveCount,
+        stage: "message-delete",
         errorCode: getErrorCode(deleteResult.error),
+        status: "failed",
+        disposition: "RETRYABLE",
         durationMs: Date.now() - startedAt,
       });
       return;
@@ -304,7 +327,10 @@ export class AnalyzeWorker {
         messageId: job.messageId,
         statementId: job.statementId,
         receiveCount: job.receiveCount,
+        stage: "message-delete",
         errorCode: "SHUTDOWN_TIMEOUT",
+        status: "failed",
+        disposition: "RETRYABLE",
         durationMs: Date.now() - startedAt,
       });
       return;
@@ -315,6 +341,9 @@ export class AnalyzeWorker {
       messageId: job.messageId,
       statementId: job.statementId,
       receiveCount: job.receiveCount,
+      stage: "message-delete",
+      status: "completed",
+      disposition: "ACK",
       durationMs: Date.now() - startedAt,
     });
   }

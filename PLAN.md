@@ -199,6 +199,10 @@ Status: 実装・動作確認完了。`GET /analytics/monthly/insights`、compac
 4. Worker / Bedrock errorをAlarm対象にする。
 5. sensitive dataが出ないテストを追加する。
 
+Phase 12のPlanは[plans/phase-12.md](plans/phase-12.md)に記録した。
+
+Status: 実装・動作確認完了。Structured Logger、requestId、statementId相関、Worker / Bedrock処理段階ログ、CloudWatch Metrics / AlarmをTDDで追加した。詳細は[plans/phase-12.md](plans/phase-12.md)を参照。
+
 ### Phase 13: AWS Infrastructure
 
 1. CDKでVPCとsubnetを作る。

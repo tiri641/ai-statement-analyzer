@@ -6,10 +6,12 @@ import { SqsJobQueue } from "./queue/sqs-job-queue.js";
 import {
   AnalyzeWorker,
   registerWorkerShutdownHandlers,
-  type WorkerLogger,
 } from "./worker/analyze-worker.js";
 import { createAnalyzeJobHandler } from "./worker/analyze-job-handler.js";
 import { S3ObjectStore } from "./storage/s3-object-store.js";
+import { createStructuredLogger } from "./observability/logger.js";
+
+const logger = createStructuredLogger({ service: "worker" });
 
 const queueUrl = process.env.SQS_QUEUE_URL;
 const region = process.env.AWS_REGION ?? "ap-northeast-1";
@@ -22,33 +24,25 @@ const processingLeaseSeconds = Number(
 );
 
 if (!queueUrl || !databaseUrl || !s3BucketName) {
-  console.error(
-    JSON.stringify({
-      event: "worker_start_failed",
-      errorCode: !queueUrl
-        ? "SQS_QUEUE_URL_MISSING"
-        : !databaseUrl
-          ? "DATABASE_URL_MISSING"
-          : "S3_BUCKET_NAME_MISSING",
-    }),
-  );
+  logger.error({
+    event: "worker_start_failed",
+    errorCode: !queueUrl
+      ? "SQS_QUEUE_URL_MISSING"
+      : !databaseUrl
+        ? "DATABASE_URL_MISSING"
+        : "S3_BUCKET_NAME_MISSING",
+  });
   process.exitCode = 1;
 } else if (
   !Number.isInteger(processingLeaseSeconds) ||
   processingLeaseSeconds <= 0
 ) {
-  console.error(
-    JSON.stringify({
-      event: "worker_start_failed",
-      errorCode: "PROCESSING_LEASE_SECONDS_INVALID",
-    }),
-  );
+  logger.error({
+    event: "worker_start_failed",
+    errorCode: "PROCESSING_LEASE_SECONDS_INVALID",
+  });
   process.exitCode = 1;
 } else {
-  const logger: WorkerLogger = {
-    info: (fields) => console.log(JSON.stringify(fields)),
-    error: (fields) => console.error(JSON.stringify(fields)),
-  };
   const pool = new Pool({ connectionString: databaseUrl });
   const queue = new SqsJobQueue({ queueUrl, region });
   const statements = new StatementRepository(pool);
@@ -65,6 +59,8 @@ if (!queueUrl || !databaseUrl || !s3BucketName) {
       objectStore,
       analyzer,
       leaseSeconds: processingLeaseSeconds,
+      logger,
+      modelId,
     }),
   });
 

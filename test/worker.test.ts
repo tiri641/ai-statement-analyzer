@@ -10,6 +10,7 @@ import {
   type AnalyzeJobQueue,
   type ReceivedAnalyzeJob,
 } from "../src/queue/analyze-job.ts";
+import { annotateAnalyzeJobError } from "../src/worker/analyze-job-error.ts";
 
 const statementId = "019abc00-0000-7000-8000-000000000001";
 
@@ -64,6 +65,41 @@ test("Workerは処理関数の成功後にMessageを削除する", async () => {
   await worker.run();
 
   assert.deepEqual(events, [`handle:${statementId}`, "delete:receipt-1"]);
+});
+
+test("Workerは受信時にMessageの相関情報をログへ記録する", async () => {
+  let worker!: AnalyzeWorker;
+  const job = createJob({ receiveCount: 2 });
+  const { events, logger } = createLogger();
+  const queue = createQueue({
+    receiveOne: async () => {
+      worker.requestShutdown();
+      return job;
+    },
+  });
+  worker = new AnalyzeWorker({
+    queue,
+    logger,
+    handleJob: async () => undefined,
+  });
+
+  await worker.run();
+
+  const received = events.find(
+    ({ fields }) => fields.event === "worker_message_received",
+  );
+  assert.deepEqual(
+    {
+      statementId: received?.fields.statementId,
+      messageId: received?.fields.messageId,
+      receiveCount: received?.fields.receiveCount,
+    },
+    {
+      statementId,
+      messageId: job.messageId,
+      receiveCount: 2,
+    },
+  );
 });
 
 test("WorkerはMessageを1件ずつ順番に処理する", async () => {
@@ -166,9 +202,53 @@ test("Workerは処理関数が失敗したMessageを削除せず継続する", a
   assert.equal(deleteCount, 0);
   assert.equal(events.some(({ fields }) => fields.errorCode === "Error"), true);
   assert.equal(
+    events.some(
+      ({ fields }) =>
+        fields.event === "worker_job_failed" &&
+        fields.disposition === "RETRYABLE",
+    ),
+    true,
+  );
+  assert.equal(
     JSON.stringify(events).includes("database password"),
     false,
   );
+});
+
+test("Workerはhandler例外のstageを相関ログへ記録する", async () => {
+  let worker!: AnalyzeWorker;
+  let receiveCount = 0;
+  const { events, logger } = createLogger();
+  const handlerError = annotateAnalyzeJobError(
+    new Error("database password must not be logged"),
+    "database",
+  );
+  const queue = createQueue({
+    receiveOne: async () => {
+      receiveCount += 1;
+      if (receiveCount === 1) {
+        return createJob();
+      }
+      worker.requestShutdown();
+      return null;
+    },
+  });
+  worker = new AnalyzeWorker({
+    queue,
+    logger,
+    handleJob: async () => {
+      throw handlerError;
+    },
+  });
+
+  await worker.run();
+
+  const failure = events.find(
+    ({ fields }) => fields.event === "worker_job_failed",
+  );
+  assert.equal(failure?.fields.stage, "database");
+  assert.equal(failure?.fields.disposition, "RETRYABLE");
+  assert.equal(JSON.stringify(events).includes("database password"), false);
 });
 
 test("WorkerはDeleteMessage失敗時も継続する", async () => {
@@ -198,6 +278,15 @@ test("WorkerはDeleteMessage失敗時も継続する", async () => {
 
   assert.equal(
     events.some(({ fields }) => fields.event === "worker_delete_failed"),
+    true,
+  );
+  assert.equal(
+    events.some(
+      ({ fields }) =>
+        fields.event === "worker_delete_failed" &&
+        fields.disposition === "RETRYABLE" &&
+        fields.stage === "message-delete",
+    ),
     true,
   );
   assert.equal(JSON.stringify(events).includes("receipt handle"), false);
