@@ -10,7 +10,10 @@ import type {
   MonthlyAnalyticsAggregates,
   MonthlyAnalyticsRanges,
 } from "./analytics/monthly-analytics.js";
-import type { MonthlyInsightsResponse } from "./insights/monthly-insights-service.js";
+import type {
+  MonthlyInsightsRequestOptions,
+  MonthlyInsightsResponse,
+} from "./insights/monthly-insights-service.js";
 import {
   MAX_REQUEST_BODY_BYTES,
   MAX_UPLOAD_BYTES,
@@ -58,7 +61,11 @@ export interface AnalyticsStore {
 }
 
 export interface MonthlyInsightsProvider {
-  getMonthlyInsights(year: number, month: number): Promise<MonthlyInsightsResponse>;
+  getMonthlyInsights(
+    year: number,
+    month: number,
+    options?: MonthlyInsightsRequestOptions,
+  ): Promise<MonthlyInsightsResponse>;
 }
 
 export interface AppDependencies {
@@ -362,7 +369,9 @@ export function createApp({
     try {
       const { year, month } = parsedQuery.data;
       return context.json(
-        await monthlyInsights.getMonthlyInsights(year, month),
+        await monthlyInsights.getMonthlyInsights(year, month, {
+          requestId: context.get("requestId"),
+        }),
       );
     } catch {
       logInsightsFailure(logger, context, "monthly_insights_failed");

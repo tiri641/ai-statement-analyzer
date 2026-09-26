@@ -804,11 +804,17 @@ test("Monthly Analytics APIはDB障害の詳細を返さず503にする", async 
 });
 
 test("Monthly Insights APIは年月を受け取り、生成済みInsightsを返す", async () => {
-  let received: { year: number; month: number } | undefined;
+  let received:
+    | { year: number; month: number; requestId?: string }
+    | undefined;
   const app = createTestApp({
     monthlyInsights: {
-      getMonthlyInsights: async (year, month) => {
-        received = { year, month };
+      getMonthlyInsights: async (year, month, options) => {
+        received = {
+          year,
+          month,
+          ...(options?.requestId ? { requestId: options.requestId } : {}),
+        };
         return {
           year,
           month,
@@ -833,7 +839,10 @@ test("Monthly Insights APIは年月を受け取り、生成済みInsightsを返�
   );
 
   assert.equal(response.status, 200);
-  assert.deepEqual(received, { year: 2026, month: 8 });
+  assert.equal(received?.year, 2026);
+  assert.equal(received?.month, 8);
+  assert.equal(received?.requestId, response.headers.get("X-Request-Id"));
+  assert.match(received?.requestId ?? "", /^[0-9a-f-]{36}$/);
   assert.deepEqual(await response.json(), {
     year: 2026,
     month: 8,

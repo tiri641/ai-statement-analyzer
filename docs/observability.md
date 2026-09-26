@@ -19,7 +19,7 @@ SQS本文は`statementId`だけとし、HTTPの`requestId`はMessage本文へ追
 
 `event`、`timestamp`、`service`、`requestId`、`statementId`、`messageId`、`status`、`durationMs`、`receiveCount`、`errorCode`、`stage`、`disposition`、`modelId`、`promptVersion`をJSONで出す。
 
-処理段階は`claim`、`object-store`、`ocr`、`database`、`message-delete`として記録する。カード番号、画像、Presigned URL、S3 key、raw prompt / response、raw error messageは出さない。
+処理段階は`claim`、`object-store`、`ocr`、`database`、`message-delete`として記録し、予期しないHandler例外は`unknown`として記録する。カード番号、画像、Presigned URL、S3 key、raw prompt / response、raw error messageは出さない。
 
 主なイベントは`api_request_started`、`api_request_completed`、`analyze_job_sent`、`worker_message_received`、`worker_stage_started`、`worker_job_claimed`、`worker_stage_completed`、`worker_stage_failed`、`worker_job_retry`、`worker_job_failed`、`worker_job_completed`、`worker_delete_failed`、`bedrock_request_failed`、`bedrock_response_invalid`である。エラー本文やReceipt Handleは記録しない。
 
@@ -34,6 +34,8 @@ SQS本文は`statementId`だけとし、HTTPの`requestId`はMessage本文へ追
 Metrics Namespaceは`AIStatementAnalyzer/Observability`とする。`statementId`、`requestId`、merchant名はMetricsのDimensionにしない。
 
 ObservabilityStackはAPI・WorkerのLog Groupを30日保持し、JSONログのMetric Filterと次のAlarmを定義する。
+
+このStackはログの保存先・Filter・Alarmを先に用意する。現時点ではECS実行環境が未実装のため、ECS Taskの`awslogs` Log DriverをこのLog Groupへ接続する作業はPhase 13で行う。接続前はアプリケーションのstdout/stderrログがこのAlarmへ到達しないため、AWS上のAlarmが実稼働状態になるのはPhase 13完了後である。
 
 - Main Queue oldest message age: 600秒以上が5分継続
 - Worker error: 5分間に3件以上

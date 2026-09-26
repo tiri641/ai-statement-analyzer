@@ -7,6 +7,7 @@ import {
   createStructuredLogger,
   type StructuredLogger,
 } from "../observability/logger.js";
+import { getAnalyzeJobErrorStage } from "./analyze-job-error.js";
 
 const INITIAL_RECEIVE_BACKOFF_MS = 1_000;
 const MAX_RECEIVE_BACKOFF_MS = 30_000;
@@ -262,6 +263,7 @@ export class AnalyzeWorker {
         messageId: job.messageId,
         statementId: job.statementId,
         receiveCount: job.receiveCount,
+        stage: getAnalyzeJobErrorStage(handlerResult.error) ?? "unknown",
         errorCode: getErrorCode(handlerResult.error),
         status: "failed",
         disposition: "RETRYABLE",

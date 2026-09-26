@@ -19,6 +19,29 @@ export type AnalyzeFailureCode = StatementFailureCode;
 
 export type AnalyzeJobErrorStage = "object-store" | "ocr" | "database";
 
+const errorStages = new WeakMap<object, AnalyzeJobErrorStage>();
+
+export function annotateAnalyzeJobError(
+  error: unknown,
+  stage: AnalyzeJobErrorStage,
+): unknown {
+  if (typeof error === "object" && error !== null) {
+    errorStages.set(error, stage);
+  }
+
+  return error;
+}
+
+export function getAnalyzeJobErrorStage(
+  error: unknown,
+): AnalyzeJobErrorStage | undefined {
+  if (typeof error !== "object" || error === null) {
+    return undefined;
+  }
+
+  return errorStages.get(error);
+}
+
 export type AnalyzeJobErrorClassification =
   | { disposition: "RETRYABLE" }
   | {

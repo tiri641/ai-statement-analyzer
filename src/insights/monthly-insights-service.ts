@@ -56,6 +56,10 @@ export interface MonthlyInsightsResponse {
   cached: boolean;
 }
 
+export interface MonthlyInsightsRequestOptions {
+  requestId?: string;
+}
+
 export interface MonthlyInsightsServiceOptions {
   analytics: MonthlyInsightsAnalyticsStore;
   cache: MonthlyInsightsCache;
@@ -89,7 +93,9 @@ export class MonthlyInsightsService {
   public async getMonthlyInsights(
     year: number,
     month: number,
+    options: MonthlyInsightsRequestOptions = {},
   ): Promise<MonthlyInsightsResponse> {
+    const requestId = options.requestId;
     const ranges = getMonthlyAnalyticsRanges(year, month);
     const aggregates = await this.analytics.findMonthlyAnalytics(ranges);
     const analytics = buildMonthlyAnalytics(
@@ -115,6 +121,7 @@ export class MonthlyInsightsService {
     if (cachedResponse) {
       this.logger.info({
         event: "monthly_insights_cache_hit",
+        ...(requestId ? { requestId } : {}),
         status: "completed",
         targetMonth: lookup.targetMonth,
         modelId: this.modelId,
@@ -126,6 +133,7 @@ export class MonthlyInsightsService {
 
     this.logger.info({
       event: "monthly_insights_cache_miss",
+      ...(requestId ? { requestId } : {}),
       status: "started",
       targetMonth: lookup.targetMonth,
       modelId: this.modelId,
@@ -150,6 +158,7 @@ export class MonthlyInsightsService {
         if (lockedCachedResponse) {
           this.logger.info({
             event: "monthly_insights_cache_hit",
+            ...(requestId ? { requestId } : {}),
             status: "completed",
             targetMonth: lookup.targetMonth,
             modelId: this.modelId,
@@ -171,6 +180,7 @@ export class MonthlyInsightsService {
           if (error instanceof InvalidInsightsResponseError) {
             this.logger.error({
               event: "bedrock_response_invalid",
+              ...(requestId ? { requestId } : {}),
               status: "failed",
               stage: "insights",
               modelId: this.modelId,
@@ -182,6 +192,7 @@ export class MonthlyInsightsService {
           } else {
             this.logger.error({
               event: "bedrock_request_failed",
+              ...(requestId ? { requestId } : {}),
               status: "failed",
               stage: "insights",
               modelId: this.modelId,
@@ -204,6 +215,7 @@ export class MonthlyInsightsService {
           if (error instanceof InvalidInsightsResponseError) {
             this.logger.error({
               event: "bedrock_response_invalid",
+              ...(requestId ? { requestId } : {}),
               status: "failed",
               stage: "insights",
               modelId: this.modelId,

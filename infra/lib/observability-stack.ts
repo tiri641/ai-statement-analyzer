@@ -50,12 +50,12 @@ export class ObservabilityStack extends cdk.Stack {
     this.apiLogGroup = new logs.LogGroup(this, "ApiLogGroup", {
       logGroupName: "/ai-statement-analyzer/api",
       retention: logs.RetentionDays.ONE_MONTH,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
     this.workerLogGroup = new logs.LogGroup(this, "WorkerLogGroup", {
       logGroupName: "/ai-statement-analyzer/worker",
       retention: logs.RetentionDays.ONE_MONTH,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
     const workerErrorFilter = new logs.MetricFilter(

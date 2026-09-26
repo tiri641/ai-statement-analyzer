@@ -222,12 +222,16 @@ test("InsightsのBedrock障害は安全な相関ログへ記録する", async ()
     },
   });
 
-  await assert.rejects(() => service.getMonthlyInsights(2026, 8), error);
+  await assert.rejects(
+    () => service.getMonthlyInsights(2026, 8, { requestId: "request-123" }),
+    error,
+  );
 
   const failure = events.find(
     (fields) => fields.event === "bedrock_request_failed",
   );
   assert.equal(failure?.stage, "insights");
+  assert.equal(failure?.requestId, "request-123");
   assert.equal(failure?.modelId, "insights-model");
   assert.equal(failure?.promptVersion, "v1");
   assert.equal(failure?.errorCode, "ThrottlingException");
@@ -250,12 +254,15 @@ test("Insightsの不正なBedrock応答は通信障害と別の相関ログへ�
     },
   });
 
-  await assert.rejects(() => service.getMonthlyInsights(2026, 8));
+  await assert.rejects(
+    () => service.getMonthlyInsights(2026, 8, { requestId: "request-456" }),
+  );
 
   const failure = events.find(
     (fields) => fields.event === "bedrock_response_invalid",
   );
   assert.equal(failure?.stage, "insights");
+  assert.equal(failure?.requestId, "request-456");
   assert.equal(failure?.errorCode, "INVALID_INSIGHTS_RESPONSE");
   assert.equal(failure?.disposition, "PERMANENT");
   assert.equal(JSON.stringify(events).includes("raw model response"), false);

@@ -21,6 +21,8 @@ Observabilityはログを増やすことではなく、障害時に「何が起�
 
 CloudWatch Logsは30日保持とし、`statementId`やmerchant名をMetricsのDimensionにしない。Alarmは運用者が行動できる条件だけを定義する。
 
+ECS未実装のため、Log GroupとMetric Filter / AlarmはPhase 12で準備し、ECS Taskの`awslogs`接続はPhase 13で行う。Log GroupはStack削除時も保持する。
+
 ## 完了確認
 
-Phase開始前説明、TDD、対象テスト、型チェック、build、CDK synth、Diff check、障害時の挙動、Security、Cost、理解確認をPhase Planへ記録した。全テストは190件成功し、Production AWS変更・Push・PRは行っていない。
+Phase開始前説明、TDD、対象テスト、型チェック、build、CDK synth、Diff check、障害時の挙動、Security、Cost、理解確認をPhase Planへ記録した。全テストは191件成功し、Production AWS変更・Push・PRは行っていない。

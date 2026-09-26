@@ -23,6 +23,7 @@ import {
   type StatementObjectStore,
 } from "../storage/object-store.js";
 import {
+  annotateAnalyzeJobError,
   classifyAnalyzeJobError,
   type AnalyzeJobErrorStage,
 } from "./analyze-job-error.js";
@@ -384,7 +385,7 @@ export function createAnalyzeJobHandler(
           errorCode: getSafeErrorCode(markFailedError),
           durationMs: Date.now() - startedAt,
         });
-        throw markFailedError;
+        throw annotateAnalyzeJobError(markFailedError, "database");
       }
 
       if (markedFailed) {

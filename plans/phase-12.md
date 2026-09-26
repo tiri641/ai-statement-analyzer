@@ -1,6 +1,6 @@
 # Phase 12: Observability 実装Plan
 
-Status: 実装・動作確認完了。190テスト、型チェック、ビルド、CDK synth、Diff checkを通過。
+Status: 実装・動作確認完了。191テスト、型チェック、ビルド、CDK synth、Diff checkを通過。
 
 ## 目的
 
@@ -38,6 +38,8 @@ APIからSQS、Worker、S3、Bedrock、PostgreSQLまでの処理を、後から�
 - ECS、VPC、RDS、ALB、IAMのProductionデプロイ
 - AWS上のSlack設定変更、Push、PR、Production変更
 
+ObservabilityStackのLog GroupとAlarmはPhase 12で準備する。ECS Taskの`awslogs` Log Driverによる実行環境接続はECSを実装するPhase 13の対象であり、接続前のAlarmはAWS上でログを受信しない。
+
 ## 観測設計
 
 ### 相関ID
@@ -65,7 +67,7 @@ Message受信
   -> message-delete
 ```
 
-各段階で開始、成功、失敗、処理時間を記録する。S3 key、画像、raw AI応答は記録しない。
+各段階で開始、成功、失敗、処理時間を記録する。予期しないHandler例外は`unknown`段階として記録する。S3 key、画像、raw AI応答は記録しない。
 
 ### Structured Log
 
@@ -156,7 +158,7 @@ git diff --check
 
 検証結果:
 
-- `DATABASE_URL=postgresql://app:local_dev_password@127.0.0.1:5432/statement_analyzer_test npm test`: 190 passed / 0 failed
+- `DATABASE_URL=postgresql://app:local_dev_password@127.0.0.1:5432/statement_analyzer_test npm test`: 191 passed / 0 failed
 - `npm run typecheck`: passed
 - `npm run typecheck:infra`: passed
 - `npm run build`: passed

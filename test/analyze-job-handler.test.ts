@@ -18,6 +18,7 @@ import {
   ObjectNotFoundError,
   type StatementObjectStore,
 } from "../src/storage/object-store.ts";
+import { getAnalyzeJobErrorStage } from "../src/worker/analyze-job-error.ts";
 import {
   AnalyzeWorker,
   type WorkerLogger,
@@ -449,13 +450,15 @@ test("Analyze Job HandlerはDB保存障害でFAILEDにせず再試行する", as
 });
 
 test("Analyze Job HandlerはFAILED更新のDB障害を呼び出し元へ返す", async () => {
+  const captured = createCapturingLogger();
+  const expectedError = new Error("database unavailable");
   const handler = createAnalyzeJobHandler({
     statements: {
       findById: async () => createStatement("PROCESSING"),
       claimForProcessing: async () => claim,
       saveTransactionsAndComplete: async () => undefined,
       markFailed: async () => {
-        throw new Error("database unavailable");
+        throw expectedError;
       },
     },
     objectStore: createObjectStore(async () => ({
@@ -466,13 +469,23 @@ test("Analyze Job HandlerはFAILED更新のDB障害を呼び出し元へ返す",
     analyzer: createAnalyzer(async () => {
       throw new InvalidOcrImageError("unsupported");
     }),
+    logger: captured.logger,
     tokenGenerator: () => claim.processingToken,
   });
 
   await assert.rejects(
     handler(job),
-    (error: unknown) =>
-      error instanceof Error && error.message === "database unavailable",
+    (error: unknown) => error === expectedError,
+  );
+  assert.equal(getAnalyzeJobErrorStage(expectedError), "database");
+  assert.equal(
+    captured.events.some(
+      ({ fields }) =>
+        fields.event === "worker_stage_failed" &&
+        fields.stage === "database" &&
+        fields.disposition === "RETRYABLE",
+    ),
+    true,
   );
 });
 

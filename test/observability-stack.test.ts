@@ -23,6 +23,10 @@ test("ObservabilityStackはログ保持、Metrics、Alarmを定義する", () =>
   template.hasResourceProperties("AWS::Logs::LogGroup", {
     RetentionInDays: 30,
   });
+  const logGroups = template.findResources("AWS::Logs::LogGroup");
+  for (const logGroup of Object.values(logGroups)) {
+    assert.equal(logGroup.DeletionPolicy, "Retain");
+  }
   template.hasResourceProperties("AWS::CloudWatch::Alarm", {
     AlarmName: "ai-statement-analyzer-analyze-oldest-message",
     Threshold: 600,
