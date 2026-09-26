@@ -1,6 +1,7 @@
 import * as cdk from "aws-cdk-lib";
 import { Construct } from "constructs";
 import * as s3 from "aws-cdk-lib/aws-s3";
+import { normalizeFrontendOrigin } from "./frontend-origin.js";
 
 export interface StorageStackProps extends cdk.StackProps {
   frontendOrigin: string;
@@ -15,7 +16,12 @@ export class StorageStack extends cdk.Stack {
     id: string,
     props: StorageStackProps,
   ) {
-    const { frontendOrigin, rawRetentionDays, ...stackProps } = props;
+    const {
+      frontendOrigin: rawFrontendOrigin,
+      rawRetentionDays,
+      ...stackProps
+    } = props;
+    const frontendOrigin = normalizeFrontendOrigin(rawFrontendOrigin);
 
     super(scope, id, {
       ...stackProps,
@@ -31,10 +37,6 @@ export class StorageStack extends cdk.Stack {
 
     if (!Number.isInteger(rawRetentionDays) || rawRetentionDays < 1) {
       throw new Error("rawRetentionDays must be a positive integer");
-    }
-
-    if (!frontendOrigin.startsWith("http://") && !frontendOrigin.startsWith("https://")) {
-      throw new Error("frontendOrigin must use http or https");
     }
 
     this.statementBucket = new s3.Bucket(this, "StatementBucket", {

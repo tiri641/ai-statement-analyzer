@@ -16,6 +16,9 @@ const DEFAULT_WORKER_DESIRED_COUNT = 0;
 const DEFAULT_OCR_MODEL_ID = "jp.amazon.nova-2-lite-v1:0";
 const DEFAULT_PROCESSING_LEASE_SECONDS = 600;
 const DEFAULT_DATABASE_NAME = "statement_analyzer";
+const DEFAULT_JP_NOVA_2_LITE_MODEL_ID = "jp.amazon.nova-2-lite-v1:0";
+const DEFAULT_NOVA_2_LITE_FOUNDATION_MODEL_ARN_SUFFIX =
+  "foundation-model/amazon.nova-2-lite-v1:0";
 
 export interface ApplicationStackProps extends cdk.StackProps {
   vpc: ec2.Vpc;
@@ -30,11 +33,14 @@ export interface ApplicationStackProps extends cdk.StackProps {
   apiLogGroup: logs.ILogGroup;
   workerLogGroup: logs.ILogGroup;
   imageTag: string;
+  frontendOrigin?: string;
   certificateArn?: string;
   apiDesiredCount?: number;
   workerDesiredCount?: number;
   ocrModelId?: string;
+  ocrFoundationModelArns?: string[];
   insightsModelId?: string;
+  insightsFoundationModelArns?: string[];
   processingLeaseSeconds?: number;
 }
 
@@ -65,11 +71,14 @@ export class ApplicationStack extends cdk.Stack {
       apiLogGroup,
       workerLogGroup,
       imageTag,
+      frontendOrigin,
       certificateArn,
       apiDesiredCount = DEFAULT_API_DESIRED_COUNT,
       workerDesiredCount = DEFAULT_WORKER_DESIRED_COUNT,
       ocrModelId = DEFAULT_OCR_MODEL_ID,
+      ocrFoundationModelArns = [],
       insightsModelId,
+      insightsFoundationModelArns = [],
       processingLeaseSeconds = DEFAULT_PROCESSING_LEASE_SECONDS,
       ...stackProps
     } = props;
@@ -80,6 +89,11 @@ export class ApplicationStack extends cdk.Stack {
     assertNonNegativeInteger("apiDesiredCount", apiDesiredCount);
     assertNonNegativeInteger("workerDesiredCount", workerDesiredCount);
     assertPositiveInteger("processingLeaseSeconds", processingLeaseSeconds);
+
+    const workerBedrockResources = modelPolicyResources(
+      ocrModelId,
+      ocrFoundationModelArns,
+    );
 
     const executionRole = new iam.Role(this, "EcsExecutionRole", {
       assumedBy: new iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
@@ -128,14 +142,17 @@ export class ApplicationStack extends cdk.Stack {
       apiTaskRole.addToPolicy(
         new iam.PolicyStatement({
           actions: ["bedrock:InvokeModel"],
-          resources: [modelArn(insightsModelId)],
+          resources: modelPolicyResources(
+            insightsModelId,
+            insightsFoundationModelArns,
+          ),
         }),
       );
     }
     workerTaskRole.addToPolicy(
       new iam.PolicyStatement({
         actions: ["bedrock:InvokeModel"],
-        resources: [modelArn(ocrModelId)],
+        resources: workerBedrockResources,
       }),
     );
 
@@ -179,6 +196,7 @@ export class ApplicationStack extends cdk.Stack {
         ALLOW_NON_LOOPBACK_HOST: "true",
         PORT: "3000",
         BEDROCK_INSIGHTS_MODEL_ID: insightsModelId ?? "",
+        ...(frontendOrigin ? { FRONTEND_ORIGIN: frontendOrigin } : {}),
       },
       secrets: databaseSecrets,
       logging: new ecs.AwsLogDriver({
@@ -328,6 +346,14 @@ export class ApplicationStack extends cdk.Stack {
       value: this.migrationTaskDefinition.taskDefinitionArn,
       description: "One-off ECS task definition for schema migration",
     });
+    new cdk.CfnOutput(this, "ApiTaskDefinitionArn", {
+      value: this.apiTaskDefinition.taskDefinitionArn,
+      description: "ECS task definition for temporary API validation tasks",
+    });
+    new cdk.CfnOutput(this, "WorkerTaskDefinitionArn", {
+      value: this.workerTaskDefinition.taskDefinitionArn,
+      description: "ECS task definition for temporary Worker validation tasks",
+    });
     new cdk.CfnOutput(this, "ApiServiceName", {
       value: this.apiService.serviceName,
       description: "ECS API service name",
@@ -350,12 +376,67 @@ function apiHealthCheck(): elbv2.HealthCheck {
   };
 }
 
-function modelArn(modelId: string | undefined): string {
-  if (modelId?.startsWith("arn:")) {
-    return modelId;
+function modelPolicyResources(
+  modelId: string,
+  explicitFoundationModelArns: string[],
+): string[] {
+  if (modelId.startsWith("arn:")) {
+    if (isInferenceProfileArn(modelId)) {
+      return [
+        modelId,
+        ...requireFoundationModelArns(modelId, explicitFoundationModelArns),
+      ];
+    }
+
+    return [modelId];
   }
 
-  return `arn:${cdk.Aws.PARTITION}:bedrock:${cdk.Aws.REGION}::foundation-model/${modelId ?? "*"}`;
+  if (isInferenceProfileId(modelId)) {
+    const profileArn = `arn:${cdk.Aws.PARTITION}:bedrock:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:inference-profile/${modelId}`;
+    const foundationModelArns =
+      modelId === DEFAULT_JP_NOVA_2_LITE_MODEL_ID
+        ? defaultJpNova2LiteFoundationModelArns()
+        : requireFoundationModelArns(modelId, explicitFoundationModelArns);
+
+    return [profileArn, ...foundationModelArns];
+  }
+
+  return [
+    `arn:${cdk.Aws.PARTITION}:bedrock:${cdk.Aws.REGION}::foundation-model/${modelId}`,
+  ];
+}
+
+function isInferenceProfileId(modelId: string): boolean {
+  return ["us.", "eu.", "apac.", "jp.", "global."].some((prefix) =>
+    modelId.startsWith(prefix),
+  );
+}
+
+function isInferenceProfileArn(modelArnValue: string): boolean {
+  return (
+    modelArnValue.includes(":inference-profile/") ||
+    modelArnValue.includes(":application-inference-profile/")
+  );
+}
+
+function requireFoundationModelArns(
+  modelId: string,
+  foundationModelArns: string[],
+): string[] {
+  if (foundationModelArns.length === 0) {
+    throw new Error(
+      `${modelId} requires the Foundation Model ARNs used by its inference profile`,
+    );
+  }
+
+  return foundationModelArns;
+}
+
+function defaultJpNova2LiteFoundationModelArns(): string[] {
+  return [
+    `arn:${cdk.Aws.PARTITION}:bedrock:ap-northeast-1::${DEFAULT_NOVA_2_LITE_FOUNDATION_MODEL_ARN_SUFFIX}`,
+    `arn:${cdk.Aws.PARTITION}:bedrock:ap-northeast-3::${DEFAULT_NOVA_2_LITE_FOUNDATION_MODEL_ARN_SUFFIX}`,
+  ];
 }
 
 function assertNonEmpty(name: string, value: string): void {

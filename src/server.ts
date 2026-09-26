@@ -25,6 +25,7 @@ try {
 const awsRegion = process.env.AWS_REGION ?? "ap-northeast-1";
 const s3BucketName = process.env.S3_BUCKET_NAME;
 const sqsQueueUrl = process.env.SQS_QUEUE_URL;
+const frontendOrigin = process.env.FRONTEND_ORIGIN;
 const insightsModelId = process.env.BEDROCK_INSIGHTS_MODEL_ID;
 const insightsPromptVersion = process.env.INSIGHTS_PROMPT_VERSION ?? "v1";
 const presignedUrlExpiresSeconds = Number(
@@ -106,6 +107,7 @@ const app = createApp({
     queueUrl: sqsQueueUrl,
     region: awsRegion,
   }),
+  ...(frontendOrigin ? { frontendOrigin } : {}),
   presignedUrlExpiresSeconds,
   logger,
   ...(monthlyInsights ? { monthlyInsights } : {}),

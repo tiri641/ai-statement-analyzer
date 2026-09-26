@@ -12,7 +12,13 @@ import { NetworkStack } from "../infra/lib/network-stack.ts";
 import { ObservabilityStack } from "../infra/lib/observability-stack.ts";
 import { StorageStack } from "../infra/lib/storage-stack.ts";
 
-test("ApplicationStackはAPI・Worker・MigrationのTaskとInternal ALBを定義する", () => {
+function createApplicationStack(options: {
+  certificateArn?: string;
+  ocrModelId?: string;
+  ocrFoundationModelArns?: string[];
+  insightsModelId?: string;
+  insightsFoundationModelArns?: string[];
+} = {}) {
   const app = new cdk.App();
   const env = { account: "123456789012", region: "ap-northeast-1" };
   const network = new NetworkStack(app, "NetworkStack", { env });
@@ -50,9 +56,19 @@ test("ApplicationStackはAPI・Worker・MigrationのTaskとInternal ALBを定義
     apiLogGroup: observability.apiLogGroup as unknown as logs.ILogGroup,
     workerLogGroup: observability.workerLogGroup as unknown as logs.ILogGroup,
     imageTag: "test-image",
-    insightsModelId:
+    frontendOrigin: "http://localhost:5173",
+    insightsModelId: options.insightsModelId ??
       "arn:aws:bedrock:ap-northeast-1:123456789012:inference-profile/insights-profile",
+    insightsFoundationModelArns: options.insightsFoundationModelArns ?? [
+      "arn:aws:bedrock:ap-northeast-1::foundation-model/amazon.nova-2-lite-v1:0",
+    ],
+    ...options,
   });
+  return stack;
+}
+
+test("ApplicationStackはAPI・Worker・MigrationのTaskとInternal ALBを定義する", () => {
+  const stack = createApplicationStack();
   const template = Template.fromStack(stack);
 
   template.resourceCountIs("AWS::ECS::TaskDefinition", 3);
@@ -100,6 +116,8 @@ test("ApplicationStackはAPI・Worker・MigrationのTaskとInternal ALBを定義
   });
   template.hasOutput("InternalAlbDnsName", {});
   template.hasOutput("MigrationTaskDefinitionArn", {});
+  template.hasOutput("ApiTaskDefinitionArn", {});
+  template.hasOutput("WorkerTaskDefinitionArn", {});
 
   const policies = template.findResources("AWS::IAM::Policy");
   const apiPolicy = Object.entries(policies).find(([logicalId]) =>
@@ -116,6 +134,22 @@ test("ApplicationStackはAPI・Worker・MigrationのTaskとInternal ALBを定義
   );
   assert.match(apiPolicyJson, /bedrock:InvokeModel/);
   assert.match(apiPolicyJson, /inference-profile\/insights-profile/);
+  assert.match(
+    workerPolicyJson,
+    /inference-profile\/jp.amazon.nova-2-lite-v1:0/,
+  );
+  assert.match(
+    workerPolicyJson,
+    /"Ref":"AWS::AccountId".*inference-profile\/jp.amazon.nova-2-lite-v1:0/,
+  );
+  assert.match(
+    workerPolicyJson,
+    /ap-northeast-1::foundation-model\/amazon.nova-2-lite-v1:0/,
+  );
+  assert.match(
+    workerPolicyJson,
+    /ap-northeast-3::foundation-model\/amazon.nova-2-lite-v1:0/,
+  );
   assert.doesNotMatch(apiPolicyJson, /sqs:ReceiveMessage/);
   assert.doesNotMatch(apiPolicyJson, /sqs:GetQueueAttributes/);
   assert.doesNotMatch(workerPolicyJson, /sqs:ChangeMessageVisibility/);
@@ -135,6 +169,71 @@ test("ApplicationStackはAPI・Worker・MigrationのTaskとInternal ALBを定義
   const taskDefinitionsJson = JSON.stringify(taskDefinitions);
   assert.match(taskDefinitionsJson, /Fn::ImportValue/);
   assert.match(taskDefinitionsJson, /ContainerRegistryStack/);
+  assert.match(taskDefinitionsJson, /FRONTEND_ORIGIN/);
   assert.ok(stack.apiService);
   assert.ok(stack.workerService);
+});
+
+test("ApplicationStackはカスタムInference ProfileにFoundation Model ARNを要求する", () => {
+  assert.throws(
+    () =>
+      createApplicationStack({
+        ocrModelId: "apac.amazon.nova-2-lite-v1:0",
+      }),
+    /apac\.amazon\.nova-2-lite-v1:0 requires the Foundation Model ARNs used by its inference profile/,
+  );
+});
+
+test("ApplicationStackはカスタムInference Profile ARNをアカウント付きで許可する", () => {
+  const template = Template.fromStack(
+    createApplicationStack({
+      ocrModelId: "apac.amazon.nova-2-lite-v1:0",
+      ocrFoundationModelArns: [
+        "arn:aws:bedrock:ap-northeast-1::foundation-model/amazon.nova-2-lite-v1:0",
+      ],
+    }),
+  );
+
+  const policies = template.findResources("AWS::IAM::Policy");
+  const workerPolicy = Object.entries(policies).find(([logicalId]) =>
+    logicalId.startsWith("WorkerTaskRoleDefaultPolicy"),
+  )?.[1];
+  assert.ok(workerPolicy);
+  assert.match(
+    JSON.stringify(workerPolicy.Properties.PolicyDocument),
+    /"Ref":"AWS::AccountId".*inference-profile\/apac.amazon.nova-2-lite-v1:0/,
+  );
+});
+
+test("ApplicationStackは証明書ARNがある場合にHTTPS ListenerとHTTPリダイレクトを定義する", () => {
+  const template = Template.fromStack(
+    createApplicationStack({
+      certificateArn: "arn:aws:acm:ap-northeast-1:123456789012:certificate/test",
+    }),
+  );
+
+  template.resourceCountIs("AWS::ElasticLoadBalancingV2::Listener", 2);
+  template.hasResourceProperties("AWS::ElasticLoadBalancingV2::Listener", {
+    Port: 443,
+    Protocol: "HTTPS",
+    Certificates: [
+      {
+        CertificateArn:
+          "arn:aws:acm:ap-northeast-1:123456789012:certificate/test",
+      },
+    ],
+  });
+  template.hasResourceProperties("AWS::ElasticLoadBalancingV2::Listener", {
+    Port: 80,
+    DefaultActions: [
+      {
+        Type: "redirect",
+        RedirectConfig: {
+          Port: "443",
+          Protocol: "HTTPS",
+          StatusCode: "HTTP_301",
+        },
+      },
+    ],
+  });
 });
