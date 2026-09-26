@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import type { Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { randomUUID } from "node:crypto";
@@ -33,6 +34,7 @@ import {
   createStructuredLogger,
   type StructuredLogger,
 } from "./observability/logger.js";
+import { normalizeFrontendOrigin } from "./config/frontend-origin.js";
 
 type ApiEnv = {
   Variables: {
@@ -75,6 +77,7 @@ export interface AppDependencies {
   monthlyInsights?: MonthlyInsightsProvider;
   objectStore: StatementObjectStore;
   jobQueue: AnalyzeJobQueue;
+  frontendOrigin?: string;
   presignedUrlExpiresSeconds?: number;
   logger?: StructuredLogger;
 }
@@ -219,10 +222,24 @@ export function createApp({
   monthlyInsights,
   objectStore,
   jobQueue,
+  frontendOrigin,
   presignedUrlExpiresSeconds = 300,
   logger = createStructuredLogger({ service: "api" }),
 }: AppDependencies) {
   const app = new Hono<ApiEnv>();
+
+  if (frontendOrigin) {
+    const normalizedFrontendOrigin = normalizeFrontendOrigin(frontendOrigin);
+    app.use(
+      "*",
+      cors({
+        origin: normalizedFrontendOrigin,
+        allowMethods: ["GET", "POST", "OPTIONS"],
+        allowHeaders: ["Content-Type"],
+        exposeHeaders: ["X-Request-Id"],
+      }),
+    );
+  }
 
   app.use("*", async (context, next) => {
     const requestId = randomUUID();

@@ -6,6 +6,13 @@ if (!imageTag) {
   process.exit(1);
 }
 
+if (!process.env.FRONTEND_ORIGIN?.trim()) {
+  console.error(
+    "FRONTEND_ORIGIN must be set before deploying ApplicationStack",
+  );
+  process.exit(1);
+}
+
 const region =
   process.env.AWS_REGION ?? process.env.CDK_DEFAULT_REGION ?? "ap-northeast-1";
 const result = spawnSync(

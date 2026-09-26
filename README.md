@@ -72,12 +72,15 @@ Phase 2でMigrationと業務テーブル、Phase 3でAPI入力検証と明細API
 - SQS_QUEUE_URL
 - SQS_DLQ_URL
 - BEDROCK_OCR_MODEL_ID
+- BEDROCK_OCR_FOUNDATION_MODEL_ARNS（Inference Profile使用時のみ。カンマ区切り）
 - BEDROCK_INSIGHTS_MODEL_ID
+- BEDROCK_INSIGHTS_FOUNDATION_MODEL_ARNS（Inference Profile使用時のみ。カンマ区切り）
 - BEDROCK_OCR_SCHEMA_VERSION
 - INSIGHTS_PROMPT_VERSION
 - S3_PRESIGNED_URL_EXPIRES_SECONDS
 - S3_RAW_RETENTION_DAYS
 - PROCESSING_LEASE_SECONDS
+- FRONTEND_ORIGIN（API CORSとS3 CORSで共有するOrigin。パス不可）
 
 `BEDROCK_INSIGHTS_MODEL_ID`はInsights用Bedrockモデルを指定する。`INSIGHTS_PROMPT_VERSION`はpromptのcache識別子で、未設定時は`v1`を使用する。Insights用モデルが未設定でもAPI全体は起動し、Insights Endpointだけが503を返す。
 
@@ -96,7 +99,7 @@ APIの契約は [API_DESIGN.md](API_DESIGN.md)、WorkerとSQSの説明は [docs/
 
 ## AWS Deploy
 
-Phase 4ではS3をCDKでdeployし、Phase 5ではSQSとDLQをdeployする。Phase 9ではDLQ CloudWatch AlarmとSNS通知Topicを追加した。`npm run cdk:synth`で確認し、`npm run cdk:deploy:storage`と`npm run cdk:deploy:messaging`で個別にdeployできる。StorageStackのOutput `S3BucketName`、MessagingStackのOutput `AnalyzeQueueUrl`、`AnalyzeDlqAlarmArn`、`AnalyzeAlertsTopicArn`を確認する。Slack workspace/channelの関連付けはAmazon Q Developer in chat applicationsでAWS側から行う。Phase 7〜9のBedrock Workerは、対象モデルへのアクセス許可、S3 `GetObject`、SQS Receive/Delete、DB接続が必要である。Phase 13では既存のS3、SQS、DLQを再作成せず、VPC、ALB、ECS、RDS、IAM、CloudWatchを追加する。
+Phase 4ではS3をCDKでdeployし、Phase 5ではSQSとDLQをdeployする。Phase 9ではDLQ CloudWatch AlarmとSNS通知Topicを追加した。`npm run cdk:synth`で確認し、`npm run cdk:deploy:storage`と`npm run cdk:deploy:messaging`で個別にdeployできる。StorageStackのOutput `S3BucketName`、MessagingStackのOutput `AnalyzeQueueUrl`、`AnalyzeDlqAlarmArn`、`AnalyzeAlertsTopicArn`を確認する。SNS Subscriptionの登録とEmail確認、Slack workspace/channelの関連付けはデプロイ後にAWS側で行い、通知先情報はリポジトリへ保存しない。Phase 7〜9のBedrock Workerは、対象モデルへのアクセス許可、S3 `GetObject`、SQS Receive/Delete、DB接続が必要である。Inference Profileを使う場合は、推論先リージョンのFoundation Model ARNもTask Roleへ許可する。Phase 13では既存のS3、SQS、DLQを再作成せず、VPC、ALB、ECS、RDS、IAM、CloudWatchを追加する。`FRONTEND_ORIGIN`はAPI CORSとS3 CORSへ同じOriginとして渡し、ApplicationStackのdeploy時は指定漏れを検出する。
 
 `npm run consume:analyze`は`SQS_QUEUE_URL`のMessageを最大1件受信し、MessageのValidationに成功した場合だけ`DeleteMessage`する。空なら`EMPTY`を出力する。常駐Workerの`npm run worker`は処理関数の成功後だけ削除し、処理失敗・不正Message・Delete失敗時は削除せず継続する。SIGTERM / SIGINTを受信すると新規受信を止め、通常は処理中Messageの完了を待つ。Shutdown要求後30秒を超えて処理または削除が完了しない場合は削除せず終了し、SQSの再配送に任せる。
 

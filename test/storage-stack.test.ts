@@ -97,6 +97,19 @@ test("StorageStackは不正な保持日数を拒否する", () => {
   );
 });
 
+test("StorageStackはOrigin以外のFrontend URLを拒否する", () => {
+  const app = new cdk.App();
+
+  assert.throws(
+    () =>
+      new StorageStack(app, "InvalidFrontendOriginStack", {
+        frontendOrigin: "https://frontend.example.test/path",
+        rawRetentionDays: 7,
+      }),
+    /frontendOrigin must be an origin without a path/,
+  );
+});
+
 test("StorageStackはbootstrap versionのSSM参照をテンプレートへ追加しない", () => {
   const app = new cdk.App();
   const stack = new StorageStack(app, "StorageStackWithoutBootstrapRule", {

@@ -1,6 +1,28 @@
 # Phase 13: AWS Infrastructure 実装Plan
 
-Status: 実装中。`main`の`1a90208`から`phase-13/aws-infrastructure`を作成して進める。
+Status: Phase 13本体は`main`へマージ済み。追加修正は`phase-13/pre-deploy-fixes`で実装・検証完了。独立レビューで見つかったInference Profile ARNのアカウントID不足と、deploy時の`FRONTEND_ORIGIN`指定漏れも修正済み。
+
+## 追加修正Plan: デプロイ前の安全性・接続設定
+
+### 目的
+
+NAT Gateway 1台、Internal ALB、Private ECS Taskを維持したまま、AWSデプロイ前に必要な設定不一致と運用手順を修正する。SSM管理用EC2、Client VPN、Public ALB、VPC Endpoint構成は追加しない。
+
+### 変更内容
+
+- BedrockのFoundation Model ID、Geo Inference Profile ID、完全なARNを区別し、Inference Profileと推論先リージョンのFoundation ModelをECS Task Roleで許可する。
+- `FRONTEND_ORIGIN`をAPIとS3へ同じ値で渡し、APIのCORSをOrigin限定で有効化する。`*`とCredentialsは使わない。
+- SNS TopicとAlarm ActionはCDK管理のままとし、Subscription登録、Email確認、Amazon Q Developer経由のSlack設定をデプロイ後のコンソール作業として記録する。
+- Internal ALBの疎通は、API Service起動後にPrivate Subnetから一時Fargate検証Taskを実行して確認する。開発者のブラウザから直接接続するためのAccessStackは別Phaseとする。
+- 証明書ARNがある場合は既存のHTTPS ListenerとHTTPリダイレクトを使い、ない場合はLearning環境のVPC内部HTTPとして扱う。本番用途ではHTTPSを必須とする。
+
+### TDD・完了条件
+
+- Bedrock IAM Resource、Profileの推論先リージョン、API/Worker Task Role分離をCDK Testで確認する。
+- CORSの許可Origin、Preflight、不許可Origin、`X-Request-Id`公開をAPI Testで確認する。
+- APIとS3のOrigin設定、HTTPSあり／なし、NAT Gateway 1台をCDK Testで確認する。
+- SNS直接通知とCloudWatch Alarm経由通知を別々に確認する手順を記録する。
+- `npm test`、typecheck、build、CDK synth、Docker build、Diff checkを成功させる。
 
 ## 目的
 
@@ -80,7 +102,7 @@ HTTP API、`statementId`だけを含むSQS Message、Atomic claim、lease、proc
 ### Worker Task Role
 
 - S3 `GetObject`を`statements/*`に限定
-- Main QueueへのSQS `ReceiveMessage` / `DeleteMessage` / `GetQueueAttributes`
+- Main QueueへのSQS `ReceiveMessage` / `DeleteMessage`
 - OCRモデルへのBedrock `InvokeModel`
 - SQS SendMessage、S3 PutObject、AdministratorAccessは付与しない
 
@@ -155,7 +177,14 @@ API起動時の自動Migrationは行わない。
 
    `ECR_IMAGE_TAG=$IMAGE_TAG npm run cdk:deploy:application`でTask Definitionが同じ不変Tagを参照する。`cdk:deploy:application`は先にECRへそのTagが存在することをAWS CLIで確認するため、未PushのImageを参照したままDeployしない。API、Worker、Migrationの違いはImageではなく、ECSの`node dist/server.js`、`node dist/worker.js`、`node dist/migrate.js`というCommandだけである。
 
-   `BEDROCK_*_MODEL_ID`にはFoundation Model IDを指定できる。Inference Profileを使う場合は、対象Inference Profileの完全なARNを指定する。
+   `BEDROCK_*_MODEL_ID`にはFoundation Model ID、Inference Profile ID、完全なARNを指定できる。Inference ProfileのARNを指定する場合、または既定以外のGeo／Global Profile IDを指定する場合は、対象Profileに紐づくFoundation Model ARNを次の環境変数へカンマ区切りで指定する。
+
+   ```bash
+   BEDROCK_OCR_FOUNDATION_MODEL_ARNS="arn:aws:bedrock:ap-northeast-1::foundation-model/amazon.nova-2-lite-v1:0,arn:aws:bedrock:ap-northeast-3::foundation-model/amazon.nova-2-lite-v1:0" \
+   BEDROCK_INSIGHTS_FOUNDATION_MODEL_ARNS="<foundation-model-arn>,<destination-foundation-model-arn>"
+   ```
+
+   既定の`jp.amazon.nova-2-lite-v1:0`については、TokyoとOsakaのFoundation Model ARNをCDKが設定する。デプロイ前に`aws bedrock get-inference-profile`でProfileの存在、対象リージョン、アカウントのモデルアクセスを確認する。
 
 3. **One-off Migration Taskを実行する**
 
@@ -189,10 +218,13 @@ API起動時の自動Migrationは行わない。
    ECS_WORKER_DESIRED_COUNT=1 \
    BEDROCK_OCR_MODEL_ID="jp.amazon.nova-2-lite-v1:0" \
    BEDROCK_INSIGHTS_MODEL_ID="<insights-model-id>" \
+   FRONTEND_ORIGIN="<frontend-origin>" \
    npm run cdk:deploy:application
    ```
 
-   Frontendからの接続先は`localhost`ではなく、OutputのInternal ALB DNS名になる。ALBはInternet-facingではなく、ALB Security GroupはVPC CIDRからのHTTP/HTTPSだけ、API Security GroupはALBからの3000番だけを許可する。ECS TaskにはPublic IPを付けない。
+   InsightsにInference Profileを指定する場合は、`BEDROCK_INSIGHTS_FOUNDATION_MODEL_ARNS`も同じDeploy環境へ指定する。`FRONTEND_ORIGIN`はAPIとS3で同じOriginを使用し、`*`やパス付きURLを指定しない。
+
+   Frontendからの接続先は`localhost`ではなく、OutputのInternal ALB DNS名になる。ALBはInternet-facingではなく、ALB Security GroupはVPC CIDRからのHTTP/HTTPSだけ、API Security GroupはALBからの3000番だけを許可する。ECS TaskにはPublic IPを付けない。開発者のローカルブラウザから直接接続するためのVPNや管理用EC2はこのPhaseでは作成しない。
 
 5. **処理経路を確認する**
 
@@ -204,6 +236,16 @@ API起動時の自動Migrationは行わない。
 
    ローカルの`DATABASE_URL`、Docker PostgreSQL、端末のAWS Credentials、端末ログはAWS実行時には使わない。AWS SDKはTask Roleの一時Credentialsを自動取得する。API Task RoleとWorker Task Roleは分離され、ECS AgentだけがExecution Roleを使う。
 
+6. **BedrockとInternal ALBを一時Fargate Taskで検証する**
+
+   Worker Task Definitionの`WorkerContainer`を`node dist/ai/bedrock-ocr-smoke.js`へOverrideし、Private SubnetとWorker Security Groupで実行する。合成PNGだけを使い、終了コードとCloudWatch LogsでTask RoleのBedrock権限を確認する。実データや画像内容はログへ出さない。
+
+   API Service起動後は、API Task Definitionの`ApiContainer`を`node -e`のHTTP検証CommandへOverrideし、Internal ALBの`/health`と`/health/db`へアクセスする。検証Taskは終了後に残さない。Task Definition ARN、Cluster Name、Application Subnet IDs、Security Group IDs、Internal ALB DNSはCloudFormation Outputsから取得する。
+
+7. **SNS通知をデプロイ後に設定する**
+
+   `AnalyzeAlertsTopicArn`を使ってSNS Subscriptionをマネジメントコンソールで登録する。EmailはSubscription Confirmationを完了し、SlackはAmazon Q Developer in chat applicationsへTopicを関連付ける。SNS Topicへの直接テスト通知と、CloudWatch Alarmからの通知を別々に確認する。
+
 ## TDD・検証
 
 実装順はDB設定とserver safety、Docker build、Network/RDS、ECR/ECS/ALB/IAMの順とする。
@@ -214,6 +256,10 @@ API起動時の自動Migrationは行わない。
 - Network、RDS、ECR、ECS、ALB、IAMのCDK Template Test
 - Secret平文非漏洩Test
 - API/Worker Task Roleの権限分離Test
+- Inference Profileと推論先Foundation Model ARNのIAM Test
+- API CORSの許可Origin、Preflight、不許可Origin、`X-Request-Id`公開Test
+- APIとS3のOrigin設定、HTTPSあり／なし、NAT Gateway 1台のTemplate Test
+- 一時Fargate検証TaskのCloudWatch Logsと終了コードを確認する運用Test
 - `awslogs`、`stopTimeout`、Private subnet、既存Stack非再作成のTest
 
 最終検証:

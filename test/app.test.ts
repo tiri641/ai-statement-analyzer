@@ -15,6 +15,7 @@ function createTestDatabase(
 function createTestApp(
   database: HealthDatabase,
   logger?: StructuredLogger,
+  frontendOrigin?: string,
 ) {
   return createApp({
     database,
@@ -61,6 +62,7 @@ function createTestApp(
       deleteMessage: async () => undefined,
     },
     ...(logger ? { logger } : {}),
+    ...(frontendOrigin ? { frontendOrigin } : {}),
   });
 }
 
@@ -157,4 +159,66 @@ test("未定義のパスは404を返す", async () => {
   const response = await app.request("/unknown");
 
   assert.equal(response.status, 404);
+});
+
+test("APIは許可されたFrontend OriginへCORSヘッダーを返す", async () => {
+  const app = createTestApp(
+    createTestDatabase(async () => ({ rows: [] })),
+    undefined,
+    "http://localhost:5173",
+  );
+
+  const response = await app.request("/health", {
+    headers: { Origin: "http://localhost:5173" },
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(
+    response.headers.get("Access-Control-Allow-Origin"),
+    "http://localhost:5173",
+  );
+  assert.equal(response.headers.get("Access-Control-Expose-Headers"), "X-Request-Id");
+});
+
+test("APIは許可OriginのPreflightへ応答する", async () => {
+  const app = createTestApp(
+    createTestDatabase(async () => ({ rows: [] })),
+    undefined,
+    "https://frontend.example.test",
+  );
+
+  const response = await app.request("/statements", {
+    method: "OPTIONS",
+    headers: {
+      Origin: "https://frontend.example.test",
+      "Access-Control-Request-Method": "POST",
+      "Access-Control-Request-Headers": "content-type",
+    },
+  });
+
+  assert.equal(response.status, 204);
+  assert.equal(
+    response.headers.get("Access-Control-Allow-Origin"),
+    "https://frontend.example.test",
+  );
+  assert.match(response.headers.get("Access-Control-Allow-Methods") ?? "", /POST/);
+  assert.match(
+    response.headers.get("Access-Control-Allow-Headers") ?? "",
+    /content-type/i,
+  );
+});
+
+test("APIは許可していないOriginへCORS許可を返さない", async () => {
+  const app = createTestApp(
+    createTestDatabase(async () => ({ rows: [] })),
+    undefined,
+    "https://frontend.example.test",
+  );
+
+  const response = await app.request("/health", {
+    headers: { Origin: "https://attacker.example.test" },
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("Access-Control-Allow-Origin"), null);
 });

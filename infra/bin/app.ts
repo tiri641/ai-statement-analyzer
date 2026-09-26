@@ -8,6 +8,7 @@ import { MessagingStack } from "../lib/messaging-stack.js";
 import { NetworkStack } from "../lib/network-stack.js";
 import { ObservabilityStack } from "../lib/observability-stack.js";
 import { StorageStack } from "../lib/storage-stack.js";
+import { normalizeFrontendOrigin } from "../lib/frontend-origin.js";
 
 const app = new cdk.App();
 const region =
@@ -16,10 +17,11 @@ const region =
   app.node.tryGetContext("region") ??
   "ap-northeast-1";
 const account = process.env.CDK_DEFAULT_ACCOUNT;
-const frontendOrigin =
+const frontendOrigin = normalizeFrontendOrigin(
   process.env.FRONTEND_ORIGIN ??
-  app.node.tryGetContext("frontendOrigin") ??
-  "http://localhost:5173";
+    app.node.tryGetContext("frontendOrigin") ??
+    "http://localhost:5173",
+);
 const rawRetentionDays = Number(
   process.env.S3_RAW_RETENTION_DAYS ??
     app.node.tryGetContext("rawRetentionDays") ??
@@ -49,6 +51,12 @@ const ocrModelId =
 const insightsModelId =
   process.env.BEDROCK_INSIGHTS_MODEL_ID ??
   app.node.tryGetContext("insightsModelId");
+const ocrFoundationModelArns = parseCommaSeparatedList(
+  process.env.BEDROCK_OCR_FOUNDATION_MODEL_ARNS,
+);
+const insightsFoundationModelArns = parseCommaSeparatedList(
+  process.env.BEDROCK_INSIGHTS_FOUNDATION_MODEL_ARNS,
+);
 const certificateArn =
   process.env.INTERNAL_ALB_CERTIFICATE_ARN ??
   app.node.tryGetContext("certificateArn");
@@ -121,12 +129,28 @@ const applicationProps = {
   apiLogGroup: observability.apiLogGroup,
   workerLogGroup: observability.workerLogGroup,
   imageTag,
+  frontendOrigin,
   apiDesiredCount,
   workerDesiredCount,
   ocrModelId,
+  ...(ocrFoundationModelArns ? { ocrFoundationModelArns } : {}),
   processingLeaseSeconds,
   ...(insightsModelId ? { insightsModelId } : {}),
+  ...(insightsFoundationModelArns ? { insightsFoundationModelArns } : {}),
   ...(certificateArn ? { certificateArn } : {}),
 };
 
 new ApplicationStack(app, "ApplicationStack", applicationProps);
+
+function parseCommaSeparatedList(value: string | undefined): string[] | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const values = value
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+
+  return values.length > 0 ? values : undefined;
+}
