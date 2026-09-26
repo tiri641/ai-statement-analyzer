@@ -130,7 +130,7 @@ Task Roleはアプリケーション用、Execution RoleはECS Agent用と明確
 
 ## デプロイ失敗時の切り分け
 
-今回のデプロイで発生したCDK execution roleの権限不足、CloudFormationの部分失敗、ECS MigrationのRDS SSLエラー、再発防止策は [Phase 13 AWSデプロイ失敗記録と切り分け手順](../docs/phase-13-deployment-troubleshooting.md) に記録する。
+今回のデプロイとdestroyで発生したCDK execution roleの権限不足、CloudFormationの部分失敗、ECS MigrationのRDS SSLエラー、残存リソースの確認方法、再発防止策は [Phase 13 AWSデプロイ・destroy失敗記録と切り分け手順](../docs/phase-13-deployment-troubleshooting.md) に記録する。
 
 ## Migration順序
 

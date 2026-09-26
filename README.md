@@ -97,7 +97,7 @@ Phase 7のFake ClientテストはAWSへ接続しない。認証済みのAWS環�
 
 APIの契約は [API_DESIGN.md](API_DESIGN.md)、WorkerとSQSの説明は [docs/worker.md](docs/worker.md) と [docs/sqs.md](docs/sqs.md) にある。
 
-Phase 13のAWSデプロイで発生した権限不足、CloudFormation失敗、RDS SSL接続エラーの切り分けは [docs/phase-13-deployment-troubleshooting.md](docs/phase-13-deployment-troubleshooting.md) を参照する。
+Phase 13のAWSデプロイとdestroyで発生した権限不足、CloudFormation失敗、RDS SSL接続エラー、残存リソースの確認方法は [docs/phase-13-deployment-troubleshooting.md](docs/phase-13-deployment-troubleshooting.md) を参照する。
 
 ## AWS Deploy
 

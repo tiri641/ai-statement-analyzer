@@ -1,4 +1,4 @@
-# Phase 13 AWSデプロイ失敗記録と切り分け手順
+# Phase 13 AWSデプロイ・destroy失敗記録と切り分け手順
 
 Phase 13のAWSデプロイで実際に発生した失敗を、原因、確認方法、修正方法、再発防止策として記録する。
 
@@ -219,6 +219,142 @@ unset DATABASE_URL TEST_DATABASE_PASSWORD
 ```
 
 AWS RDSに対してローカルから直接統合テストを行うのではなく、Migration成功、ECS内からの`/health/db`、必要なAPI/Workerの検証TaskでAWS接続を確認する。
+
+## cdk destroyで発生した失敗と残存リソース
+
+今回の削除では、アプリケーション用Stackの削除と、CDKがデプロイに使用するBootstrap Stackの削除は別の処理として扱う必要があった。次の順番で切り分ける。
+
+### 1. `cdk: command not found`
+
+#### 症状
+
+グローバルインストールされたCDK CLIを前提に、次のコマンドを実行したところ、シェルが`cdk`を見つけられなかった。
+
+```text
+/bin/bash: cdk: command not found
+```
+
+#### 原因と修正
+
+このリポジトリではCDK CLIをプロジェクトの開発依存として管理しており、実行環境のPATHにグローバルの`cdk`コマンドが存在するとは限らない。リポジトリの依存関係を使って実行する。
+
+```bash
+npx cdk destroy --all --force
+```
+
+実行前に`npm install`または`npm ci`が完了していること、AWS CLIの認証済みアカウントとリージョンが意図した対象であることを確認する。
+
+### 2. DatabaseStackがRDSの最終スナップショット作成権限で失敗した
+
+#### 症状
+
+ApplicationStack、StorageStack、ObservabilityStack、ContainerRegistryStackの削除後、DatabaseStackが次のエラーで`DELETE_FAILED`になった。
+
+```text
+not authorized to perform: rds:CreateDBSnapshot
+```
+
+#### 原因
+
+DatabaseStackのRDSインスタンスには、削除時に最終スナップショットを作成する`DeletionPolicy: Snapshot`が設定されていた。CloudFormationはCDK execution roleを使って削除するため、通常のデプロイに必要な権限があっても、RDSスナップショット作成権限がなければ削除処理だけが失敗する。
+
+#### 修正
+
+CDK BootstrapのCloudFormation execution roleに、対象環境の運用方針に従って次のRDS権限を付与した後、destroyを再実行した。
+
+- `rds:CreateDBSnapshot`
+- `rds:DeleteDBSnapshot`
+- `rds:DescribeDBSnapshots`
+
+```bash
+npx cdk destroy --all --force
+```
+
+再実行でDatabaseStackを含む残りのアプリケーションStackは削除できた。スナップショットを復旧に利用しない場合は、destroy成功後に対象識別子を確認してから手動削除する。スナップショット削除は復旧手段を失わせるため、先に保持要否を判断する。
+
+#### 再発防止
+
+本番データを保持する環境では、RDSの最終スナップショットを残す設計を維持し、削除専用の権限を安易に広げない。検証環境を完全削除する場合は、次のどちらかを事前に決めておく。
+
+- スナップショットを残す: execution roleにスナップショット作成権限を用意する。
+- スナップショットを残さない: 対象環境だけ削除ポリシーを変更し、データを失うことを明示的に承認する。
+
+### 3. `Retain`またはStack外管理のリソースが残った
+
+#### 症状
+
+CloudFormation Stackが削除済みでも、次のリソースが残った。
+
+- アプリケーション用S3バケット
+- アプリケーション用ECRリポジトリ
+- API/WorkerのCloudWatch Logsロググループ
+
+#### 原因と修正
+
+`RemovalPolicy.RETAIN`、データ保護のための削除ポリシー、またはStackとは別に管理されるリソースは、Stack削除だけでは消えない。空のS3バケットでも、バケット自体の削除が別途必要である。
+
+削除する場合は、アカウント・リージョン・名前を照合し、対象を限定してから実行する。
+
+```bash
+# S3: 中身を確認してから、対象バケットだけを削除
+aws s3api list-objects-v2 --bucket <application-bucket>
+aws s3api delete-bucket --bucket <application-bucket>
+
+# ECR: 対象リポジトリとイメージを確認してから削除
+aws ecr describe-repositories --repository-names <application-repository>
+aws ecr delete-repository --repository-name <application-repository> --force
+
+# CloudWatch Logs: 対象ロググループだけを確認してから削除
+aws logs describe-log-groups --log-group-name-prefix /ai-statement-analyzer/
+aws logs delete-log-group --log-group-name <application-log-group>
+```
+
+ロググループは`storedBytes`が0でもリソースとして残る。ECRのイメージやS3オブジェクトが残っている場合は、保持方針と復旧要否を確認してから削除する。
+
+### 4. `cdk destroy --all`で`CDKToolkit`は削除されなかった
+
+#### 原因
+
+`cdk destroy --all`の対象はアプリケーションStackであり、CDK CLIのBootstrapで作成した`CDKToolkit` Stackは別管理である。`CDKToolkit`には、CDKアセット用S3バケット、ECRリポジトリ、デプロイ用IAM Roleなど、今後のCDKデプロイに必要な共有リソースが含まれる。
+
+#### 修正と注意点
+
+他のアプリケーションStackや、同じアカウント・リージョンを使う別のCDKプロジェクトがないことを確認した場合だけ、次の順で削除する。削除すると、次回のCDKデプロイ前に`cdk bootstrap`が必要になる。
+
+```bash
+aws cloudformation list-stacks \
+  --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE UPDATE_ROLLBACK_COMPLETE
+
+aws cloudformation delete-stack --stack-name CDKToolkit
+```
+
+BootstrapのS3バケットにオブジェクトが残っている場合、`aws s3 rm --recursive`だけでは不十分なことがある。バージョニングされたバケットでは、古いオブジェクトバージョンとDelete Markerもすべて削除してから、バケットを削除する。
+
+```bash
+aws s3api list-object-versions --bucket <cdk-bootstrap-bucket>
+# 出力した対象のVersionIdを確認し、VersionsとDeleteMarkersを削除する
+aws s3api delete-object --bucket <cdk-bootstrap-bucket> --key <key> --version-id <version-id>
+aws s3api delete-bucket --bucket <cdk-bootstrap-bucket>
+```
+
+このバケット削除は、対象がCDK Bootstrap専用であることを確認した場合に限る。CDKを継続利用する場合は`CDKToolkit`を削除せず、Bootstrapリソースを残す。
+
+### 5. destroy後の課金確認
+
+削除完了後は、CloudFormationのStackだけでなく、次の残存リソースを確認する。検索結果が空であることと、Cost Explorerで継続的な利用が発生していないことを別々に確認する。
+
+```bash
+aws cloudformation list-stacks --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE
+aws s3api list-buckets
+aws ecr describe-repositories
+aws rds describe-db-instances
+aws rds describe-db-snapshots --snapshot-type manual
+aws ec2 describe-nat-gateways --filter Name=state,Values=pending,available,deleting
+aws ecs list-clusters
+aws elbv2 describe-load-balancers
+```
+
+Cost Explorerには反映遅延があるため、destroy直後に過去の利用料金が消えるわけではない。今回も削除後の継続リソースは確認されなかったが、実行期間中のS3、Bedrock、Secrets Managerなどの利用料金は履歴として残る。最終確認では、対象リージョンのリソース一覧が空であること、当日以降に新しい利用が増えていないことを時間を置いて確認する。
 
 ## 今回の最終確認結果
 
