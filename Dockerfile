@@ -20,6 +20,8 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/migrations ./migrations
+COPY rds-ca-rsa2048-g1.pem ./rds-ca-rsa2048-g1.pem
+ENV NODE_EXTRA_CA_CERTS=/app/rds-ca-rsa2048-g1.pem
 USER node
 
 EXPOSE 3000

@@ -170,6 +170,20 @@ test("ApplicationStackはAPI・Worker・MigrationのTaskとInternal ALBを定義
   assert.match(taskDefinitionsJson, /Fn::ImportValue/);
   assert.match(taskDefinitionsJson, /ContainerRegistryStack/);
   assert.match(taskDefinitionsJson, /FRONTEND_ORIGIN/);
+  for (const taskDefinition of Object.values(taskDefinitions) as Array<{
+    Properties: {
+      ContainerDefinitions: Array<{
+        Environment?: Array<{ Name: string; Value: string }>;
+      }>;
+    };
+  }>) {
+    for (const container of taskDefinition.Properties.ContainerDefinitions) {
+      assert.equal(
+        container.Environment?.find((entry) => entry.Name === "DB_SSL")?.Value,
+        "true",
+      );
+    }
+  }
   assert.ok(stack.apiService);
   assert.ok(stack.workerService);
 });

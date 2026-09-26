@@ -22,8 +22,16 @@ export function getDatabasePoolConfig(
   environment: NodeJS.ProcessEnv,
 ): DatabasePoolConfig {
   const connectionString = environment.DATABASE_URL?.trim();
+  const ssl =
+    environment.DB_SSL?.trim().toLowerCase() === "true"
+      ? { rejectUnauthorized: true }
+      : undefined;
+
   if (connectionString) {
-    return { connectionString };
+    return {
+      connectionString,
+      ...(ssl ? { ssl } : {}),
+    };
   }
 
   const host = environment.DB_HOST?.trim();
@@ -43,9 +51,7 @@ export function getDatabasePoolConfig(
     database,
     user,
     password,
-    ...(environment.DB_SSL?.trim().toLowerCase() === "true"
-      ? { ssl: { rejectUnauthorized: false } }
-      : {}),
+    ...(ssl ? { ssl } : {}),
   };
 }
 

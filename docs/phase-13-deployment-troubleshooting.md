@@ -184,7 +184,7 @@ RDS PostgreSQL側でSSL接続が必須になっていたが、ECSの個別DB接�
 
 #### 修正
 
-`DB_SSL`を追加し、`DB_SSL=true`の場合にNode.js PostgreSQL PoolへTLS設定を渡すようにした。ApplicationStackではECS環境変数を`DB_SSL=true`にし、ローカルの`.env.example`は`DB_SSL=false`とした。
+`DB_SSL`を追加し、`DB_SSL=true`の場合にNode.js PostgreSQL PoolへTLS設定を渡すようにした。ApplicationStackではECS環境変数を`DB_SSL=true`にし、ローカルの`.env.example`は`DB_SSL=false`とした。`DATABASE_URL`方式でも`DB_SSL=true`を指定した場合は同じTLS検証を有効にする。
 
 ```text
 ローカル Docker PostgreSQL: DB_SSL=false
@@ -193,9 +193,9 @@ AWS RDS PostgreSQL:        DB_SSL=true
 
 その後、Docker Imageを新しいTagでBuild・Pushし、ApplicationStackを更新してからMigrationを再実行した。Migrationは終了コード0、CloudWatch Logsは`migration_completed`になった。
 
-#### 注意点
+#### 証明書検証
 
-現在の設定は通信を暗号化するが、`rejectUnauthorized: false`のためRDSサーバー証明書の検証は行わない。証明書検証まで必要なProduction運用では、RDS CA BundleをImageまたは安全な設定経路へ提供し、`rejectUnauthorized: true`へ移行する。
+RDSの`rds-ca-rsa2048-g1` Root CAを`rds-ca-rsa2048-g1.pem`としてImageへ含め、Node.jsの`NODE_EXTRA_CA_CERTS`で信頼ストアへ追加している。`DB_SSL=true`では`rejectUnauthorized: true`を使用するため、通信の暗号化だけでなくRDSサーバー証明書の検証も行う。CAを更新する場合は、AWS公式の東京リージョンCAバンドル（https://truststore.pki.rds.amazonaws.com/ap-northeast-1/ap-northeast-1-bundle.pem）から対象Root CAを更新し、Imageを再Buildする。
 
 ### 8. 全テスト実行時のDB統合テスト
 
@@ -212,7 +212,10 @@ DB統合テストは接続先を自動推測せず、`DATABASE_URL`を必須と�
 ローカルのテスト用PostgreSQLを起動し、テスト専用DBの接続文字列を指定して実行する。AWS RDSのSecret値をログやシェル履歴へ出さない。
 
 ```bash
-DATABASE_URL=postgresql://app:<test-password>@127.0.0.1:5432/statement_analyzer_test npm test
+read -r -s TEST_DATABASE_PASSWORD
+export DATABASE_URL="postgresql://app:${TEST_DATABASE_PASSWORD}@127.0.0.1:5432/statement_analyzer_test"
+npm test
+unset DATABASE_URL TEST_DATABASE_PASSWORD
 ```
 
 AWS RDSに対してローカルから直接統合テストを行うのではなく、Migration成功、ECS内からの`/health/db`、必要なAPI/Workerの検証TaskでAWS接続を確認する。
