@@ -166,6 +166,7 @@ export class ApplicationStack extends cdk.Stack {
       DB_HOST: database.instanceEndpoint.hostname,
       DB_PORT: String(database.instanceEndpoint.port),
       DB_NAME: DEFAULT_DATABASE_NAME,
+      DB_SSL: "true",
       S3_BUCKET_NAME: statementBucket.bucketName,
       SQS_QUEUE_URL: analyzeQueue.queueUrl,
       S3_PRESIGNED_URL_EXPIRES_SECONDS: "300",

@@ -16,6 +16,19 @@ test("DATABASE_URLを指定した場合は従来の接続方式を維持する",
   });
 });
 
+test("DATABASE_URLとDB_SSL=trueを指定した場合はTLS検証を有効化する", () => {
+  const config = getDatabasePoolConfig({
+    DATABASE_URL: "postgres://app:password@database.internal:5432/statement_analyzer",
+    DB_SSL: "true",
+  });
+
+  assert.deepEqual(config, {
+    connectionString:
+      "postgres://app:password@database.internal:5432/statement_analyzer",
+    ssl: { rejectUnauthorized: true },
+  });
+});
+
 test("ECS用の個別DB設定からPool設定を構築する", () => {
   const config = getDatabasePoolConfig({
     DB_HOST: "database.internal",
@@ -32,6 +45,18 @@ test("ECS用の個別DB設定からPool設定を構築する", () => {
     user: "app",
     password: "secret-password",
   });
+});
+
+test("DB_SSL=trueの場合はTLS接続を有効化する", () => {
+  const config = getDatabasePoolConfig({
+    DB_HOST: "database.internal",
+    DB_NAME: "statement_analyzer",
+    DB_USER: "app",
+    DB_PASSWORD: "secret-password",
+    DB_SSL: "true",
+  });
+
+  assert.deepEqual(config.ssl, { rejectUnauthorized: true });
 });
 
 test("ECS用DB設定のPort未指定時は5432を使う", () => {

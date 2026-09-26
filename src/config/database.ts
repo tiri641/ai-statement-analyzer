@@ -9,15 +9,29 @@ export class DatabaseConfigurationError extends Error {
 
 type DatabasePoolConfig = Pick<
   PoolConfig,
-  "connectionString" | "host" | "port" | "database" | "user" | "password"
+  | "connectionString"
+  | "host"
+  | "port"
+  | "database"
+  | "user"
+  | "password"
+  | "ssl"
 >;
 
 export function getDatabasePoolConfig(
   environment: NodeJS.ProcessEnv,
 ): DatabasePoolConfig {
   const connectionString = environment.DATABASE_URL?.trim();
+  const ssl =
+    environment.DB_SSL?.trim().toLowerCase() === "true"
+      ? { rejectUnauthorized: true }
+      : undefined;
+
   if (connectionString) {
-    return { connectionString };
+    return {
+      connectionString,
+      ...(ssl ? { ssl } : {}),
+    };
   }
 
   const host = environment.DB_HOST?.trim();
@@ -37,6 +51,7 @@ export function getDatabasePoolConfig(
     database,
     user,
     password,
+    ...(ssl ? { ssl } : {}),
   };
 }
 

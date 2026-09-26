@@ -9,6 +9,8 @@ test("アプリケーションImageはAPIを既定Commandとして起動する",
   assert.match(dockerfile, /npm run build/);
   assert.match(dockerfile, /COPY --from=build .*dist/);
   assert.match(dockerfile, /COPY --from=build .*migrations/);
+  assert.match(dockerfile, /COPY rds-ca-rsa2048-g1\.pem/);
+  assert.match(dockerfile, /NODE_EXTRA_CA_CERTS=\/app\/rds-ca-rsa2048-g1\.pem/);
   assert.match(dockerfile, /USER node/);
   assert.match(dockerfile, /CMD \["node", "dist\/server\.js"\]/);
 });

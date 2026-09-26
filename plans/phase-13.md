@@ -86,6 +86,8 @@ HTTP API、`statementId`だけを含むSQS Message、Atomic claim、lease、proc
 
 - `DATABASE_URL`があればローカル互換の接続文字列を使う。
 - `DATABASE_URL`がなければ`DB_HOST`、`DB_PORT`、`DB_NAME`、`DB_USER`、`DB_PASSWORD`からPoolを構築する。
+- ECSのRDS PostgreSQLはSSL接続が必須のため、`DB_SSL=true`を設定する。ローカルのDocker PostgreSQLは`DB_SSL=false`のままにする。
+- ECS ImageにはRDS `rds-ca-rsa2048-g1` Root CAを含め、`rejectUnauthorized=true`でサーバー証明書を検証する。
 - Secret、接続文字列、Access Keyをログへ出さない。
 - ECS APIは`HOST=0.0.0.0`と`ALLOW_NON_LOOPBACK_HOST=true`を明示した場合だけ非loopback bindを許可する。
 - ローカルの既存DBデータ移行は対象外とし、RDSへSchema Migrationを適用する。
@@ -125,6 +127,10 @@ Task Roleはアプリケーション用、Execution RoleはECS Agent用と明確
 - ECS `stopTimeout=30秒`、API health checkは`GET /health`とする。
 - 既存Observability Log Groupへ`awslogs`を接続する。
 - Learning環境の初期desired countは0とし、Migration成功後にAPI/Workerを1へ変更する。
+
+## デプロイ失敗時の切り分け
+
+今回のデプロイで発生したCDK execution roleの権限不足、CloudFormationの部分失敗、ECS MigrationのRDS SSLエラー、再発防止策は [Phase 13 AWSデプロイ失敗記録と切り分け手順](../docs/phase-13-deployment-troubleshooting.md) に記録する。
 
 ## Migration順序
 
@@ -265,7 +271,10 @@ API起動時の自動Migrationは行わない。
 最終検証:
 
 ```bash
-DATABASE_URL=postgresql://app:local_dev_password@127.0.0.1:5432/statement_analyzer_test npm test
+read -r -s TEST_DATABASE_PASSWORD
+export DATABASE_URL="postgresql://app:${TEST_DATABASE_PASSWORD}@127.0.0.1:5432/statement_analyzer_test"
+npm test
+unset DATABASE_URL TEST_DATABASE_PASSWORD
 npm run typecheck
 npm run typecheck:infra
 npm run build
