@@ -25,6 +25,18 @@
     "cdk:diff:messaging": "cdk diff MessagingStack",
     "cdk:deploy:messaging": "cdk deploy MessagingStack",
     "cdk:destroy:messaging": "cdk destroy MessagingStack",
+    "cdk:diff:observability": "cdk diff ObservabilityStack",
+    "cdk:deploy:observability": "cdk deploy ObservabilityStack",
+    "cdk:diff:network": "cdk diff NetworkStack",
+    "cdk:deploy:network": "cdk deploy NetworkStack",
+    "cdk:diff:registry": "cdk diff ContainerRegistryStack",
+    "cdk:deploy:registry": "cdk deploy ContainerRegistryStack",
+    "cdk:diff:database": "cdk diff DatabaseStack",
+    "cdk:deploy:database": "cdk deploy DatabaseStack",
+    "cdk:diff:application": "cdk diff ApplicationStack",
+    "cdk:verify:image": "node scripts/verify-ecr-image.mjs",
+    "cdk:deploy:application": "npm run cdk:verify:image && cdk deploy ApplicationStack",
+    "cdk:deploy:phase13": "npm run cdk:deploy:network && npm run cdk:deploy:registry && npm run cdk:deploy:database && npm run cdk:deploy:application",
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {

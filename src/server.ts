@@ -3,9 +3,10 @@ import { serve } from "@hono/node-server";
 import { Pool } from "pg";
 import { BedrockInsightsAnalyzer } from "./ai/bedrock-insights.js";
 import { createApp } from "./app.js";
+import { getDatabasePoolConfig } from "./config/database.js";
 import { StatementRepository } from "./database/statement-repository.js";
 import { MonthlyInsightsService } from "./insights/monthly-insights-service.js";
-import { isLoopbackHost } from "./server-safety.js";
+import { isAllowedServerHost } from "./server-safety.js";
 import { S3ObjectStore } from "./storage/s3-object-store.js";
 import { SqsJobQueue } from "./queue/sqs-job-queue.js";
 import { createStructuredLogger } from "./observability/logger.js";
@@ -14,7 +15,13 @@ const logger = createStructuredLogger({ service: "api" });
 
 const port = Number(process.env.PORT ?? "3000");
 const host = process.env.HOST ?? "127.0.0.1";
-const databaseUrl = process.env.DATABASE_URL;
+const allowNonLoopbackHost = process.env.ALLOW_NON_LOOPBACK_HOST === "true";
+let databaseConfig: ReturnType<typeof getDatabasePoolConfig> | null = null;
+try {
+  databaseConfig = getDatabasePoolConfig(process.env);
+} catch {
+  databaseConfig = null;
+}
 const awsRegion = process.env.AWS_REGION ?? "ap-northeast-1";
 const s3BucketName = process.env.S3_BUCKET_NAME;
 const sqsQueueUrl = process.env.SQS_QUEUE_URL;
@@ -24,7 +31,7 @@ const presignedUrlExpiresSeconds = Number(
   process.env.S3_PRESIGNED_URL_EXPIRES_SECONDS ?? "300",
 );
 
-if (!isLoopbackHost(host)) {
+if (!isAllowedServerHost(host, allowNonLoopbackHost)) {
   logger.error({
     event: "api_start_failed",
     errorCode: "AUTH_REQUIRED_FOR_NON_LOOPBACK_HOST",
@@ -32,10 +39,10 @@ if (!isLoopbackHost(host)) {
   process.exit(1);
 }
 
-if (!databaseUrl) {
+if (!databaseConfig) {
   logger.error({
     event: "api_start_failed",
-    errorCode: "DATABASE_URL_MISSING",
+    errorCode: "DATABASE_CONFIG_MISSING",
   });
   process.exit(1);
 }
@@ -69,7 +76,7 @@ if (
 }
 
 const pool = new Pool({
-  connectionString: databaseUrl,
+  ...databaseConfig,
   connectionTimeoutMillis: 2_000,
   query_timeout: 2_000,
 });

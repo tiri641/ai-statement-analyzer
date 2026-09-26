@@ -1,0 +1,16 @@
+.git/
+.github/
+.agents/
+.codex/
+.env
+.env.*
+node_modules/
+dist/
+cdk.out/
+coverage/
+test/
+infra/
+docs/
+learning/
+plans/
+*.log

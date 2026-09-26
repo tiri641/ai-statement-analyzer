@@ -212,6 +212,8 @@ Status: 実装・動作確認完了。Structured Logger、requestId、statementI
 5. IAM Role、Secrets、CloudWatchを最小権限で接続する。
 6. NAT / Endpointの承認案を実装する。
 
+Phase 13の詳細Planは[plans/phase-13.md](plans/phase-13.md)に記録する。既存のS3、SQS、DLQ、Observabilityを再作成せず、ローカルのAPI・Worker・Docker PostgreSQLをDocker/ECS、RDS、Task Role、Internal ALB、CloudWatch Logs、One-off Migrationへ段階的に切り替える。認証、Internet-facing ALB、Frontend、Autoscaling、Multi-AZ RDSは後続Phaseとする。
+
 ### Phase 14: Cost Optimization
 
 1. Cost Explorer / Pricing Calculatorで前提を更新する。
