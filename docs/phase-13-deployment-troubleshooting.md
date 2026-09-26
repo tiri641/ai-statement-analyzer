@@ -379,10 +379,17 @@ while true; do
     --output json | jq '{Objects: ((.Versions // []) + (.DeleteMarkers // []) | map({Key, VersionId})), Quiet: true}')"
   object_count="$(printf '%s' "$delete_payload" | jq '.Objects | length')"
   [ "$object_count" -eq 0 ] && break
-  aws s3api delete-objects \
+  delete_result="$(aws s3api delete-objects \
     --bucket "$CDK_BOOTSTRAP_BUCKET" \
     --region "$AWS_REGION" \
-    --delete "$delete_payload"
+    --delete "$delete_payload" \
+    --output json)"
+  delete_errors="$(printf '%s' "$delete_result" | jq '(.Errors // []) | length')"
+  [ "$delete_errors" -eq 0 ] || {
+    printf '%s\n' "$delete_result" | jq '.Errors'
+    echo "S3 object deletion returned per-object errors; stop without deleting the bucket" >&2
+    exit 1
+  }
 done
 
 remaining_count="$(aws s3api list-object-versions \
