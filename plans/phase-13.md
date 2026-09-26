@@ -127,6 +127,10 @@ Task Roleはアプリケーション用、Execution RoleはECS Agent用と明確
 - 既存Observability Log Groupへ`awslogs`を接続する。
 - Learning環境の初期desired countは0とし、Migration成功後にAPI/Workerを1へ変更する。
 
+## デプロイ失敗時の切り分け
+
+今回のデプロイで発生したCDK execution roleの権限不足、CloudFormationの部分失敗、ECS MigrationのRDS SSLエラー、再発防止策は [Phase 13 AWSデプロイ失敗記録と切り分け手順](../docs/phase-13-deployment-troubleshooting.md) に記録する。
+
 ## Migration順序
 
 1. Network、RDS、ECRを作成する。

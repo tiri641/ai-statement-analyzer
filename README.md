@@ -97,6 +97,8 @@ Phase 7のFake ClientテストはAWSへ接続しない。認証済みのAWS環�
 
 APIの契約は [API_DESIGN.md](API_DESIGN.md)、WorkerとSQSの説明は [docs/worker.md](docs/worker.md) と [docs/sqs.md](docs/sqs.md) にある。
 
+Phase 13のAWSデプロイで発生した権限不足、CloudFormation失敗、RDS SSL接続エラーの切り分けは [docs/phase-13-deployment-troubleshooting.md](docs/phase-13-deployment-troubleshooting.md) を参照する。
+
 ## AWS Deploy
 
 Phase 4ではS3をCDKでdeployし、Phase 5ではSQSとDLQをdeployする。Phase 9ではDLQ CloudWatch AlarmとSNS通知Topicを追加した。`npm run cdk:synth`で確認し、`npm run cdk:deploy:storage`と`npm run cdk:deploy:messaging`で個別にdeployできる。StorageStackのOutput `S3BucketName`、MessagingStackのOutput `AnalyzeQueueUrl`、`AnalyzeDlqAlarmArn`、`AnalyzeAlertsTopicArn`を確認する。SNS Subscriptionの登録とEmail確認、Slack workspace/channelの関連付けはデプロイ後にAWS側で行い、通知先情報はリポジトリへ保存しない。Phase 7〜9のBedrock Workerは、対象モデルへのアクセス許可、S3 `GetObject`、SQS Receive/Delete、DB接続が必要である。Inference Profileを使う場合は、推論先リージョンのFoundation Model ARNもTask Roleへ許可する。Phase 13では既存のS3、SQS、DLQを再作成せず、VPC、ALB、ECS、RDS、IAM、CloudWatchを追加する。`FRONTEND_ORIGIN`はAPI CORSとS3 CORSへ同じOriginとして渡し、ApplicationStackのdeploy時は指定漏れを検出する。
