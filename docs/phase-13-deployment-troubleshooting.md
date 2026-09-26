@@ -331,6 +331,7 @@ aws logs delete-log-group --log-group-name <application-log-group>
 他のアプリケーションStackや、同じアカウント・リージョンを使う別のCDKプロジェクトがないことを確認した場合だけ、次の順で削除する。アカウントやリージョンを取り違えると共有Bootstrapを破壊するため、削除前に次の条件を満たすことを確認する。
 
 ```bash
+# AWS CLIとjqが必要。
 set -euo pipefail
 export AWS_REGION=ap-northeast-1
 aws sts get-caller-identity
@@ -402,6 +403,7 @@ aws s3api delete-bucket --bucket "$CDK_BOOTSTRAP_BUCKET" --region "$AWS_REGION"
 削除完了後は、CloudFormationのStackだけでなく、Phase 13で作成したリソースが残っていないことを確認する。共有アカウントでは、アカウント全体のS3、Secret、SNS Topic、ENIなどが空であることを成功条件にしない。Stack名、リソース名、対象VPC ID、ロググループPrefixなど、削除前に記録したPhase 13固有の識別子で絞り込む。AWS CLIの確認は対象リージョンごとに行い、Cost Explorerはアカウント全体の利用額を確認する。
 
 ```bash
+# AWS CLIとjqが必要。
 set -euo pipefail
 export AWS_REGION=ap-northeast-1
 export APPLICATION_BUCKET="replace-with-phase13-bucket"
@@ -437,8 +439,8 @@ aws ec2 describe-vpc-endpoints --region "$AWS_REGION" \
   --filters Name=vpc-id,Values="$APPLICATION_VPC_ID" --output table
 aws ec2 describe-network-interfaces --region "$AWS_REGION" \
   --filters Name=vpc-id,Values="$APPLICATION_VPC_ID" --output table
-aws ec2 describe-addresses --region "$AWS_REGION" \
-  --allocation-ids "$APPLICATION_EIP_ALLOCATION_ID" --output table
+aws ec2 describe-addresses --region "$AWS_REGION" --output json \
+  | jq --arg id "$APPLICATION_EIP_ALLOCATION_ID" '[.Addresses[] | select(.AllocationId == $id)]'
 aws ecs list-clusters --region "$AWS_REGION" --output json \
   | jq --arg prefix "$APPLICATION_ECS_CLUSTER_PREFIX" '[.clusterArns[] | select(startswith($prefix))]'
 aws elbv2 describe-load-balancers --region "$AWS_REGION" --output json \
