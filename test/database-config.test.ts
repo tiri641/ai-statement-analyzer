@@ -34,6 +34,18 @@ test("ECS用の個別DB設定からPool設定を構築する", () => {
   });
 });
 
+test("DB_SSL=trueの場合はTLS接続を有効化する", () => {
+  const config = getDatabasePoolConfig({
+    DB_HOST: "database.internal",
+    DB_NAME: "statement_analyzer",
+    DB_USER: "app",
+    DB_PASSWORD: "secret-password",
+    DB_SSL: "true",
+  });
+
+  assert.deepEqual(config.ssl, { rejectUnauthorized: false });
+});
+
 test("ECS用DB設定のPort未指定時は5432を使う", () => {
   const config = getDatabasePoolConfig({
     DB_HOST: "database.internal",

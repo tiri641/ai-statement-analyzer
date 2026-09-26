@@ -9,7 +9,13 @@ export class DatabaseConfigurationError extends Error {
 
 type DatabasePoolConfig = Pick<
   PoolConfig,
-  "connectionString" | "host" | "port" | "database" | "user" | "password"
+  | "connectionString"
+  | "host"
+  | "port"
+  | "database"
+  | "user"
+  | "password"
+  | "ssl"
 >;
 
 export function getDatabasePoolConfig(
@@ -37,6 +43,9 @@ export function getDatabasePoolConfig(
     database,
     user,
     password,
+    ...(environment.DB_SSL?.trim().toLowerCase() === "true"
+      ? { ssl: { rejectUnauthorized: false } }
+      : {}),
   };
 }
 

@@ -66,7 +66,7 @@ Phase 2でMigrationと業務テーブル、Phase 3でAPI入力検証と明細API
 
 - APP_ENV
 - PORT
-- DATABASE_URLまたはDB接続情報
+- DATABASE_URLまたはDB接続情報（AWSのRDS接続では`DB_SSL=true`）
 - AWS_REGION
 - S3_BUCKET_NAME
 - SQS_QUEUE_URL
