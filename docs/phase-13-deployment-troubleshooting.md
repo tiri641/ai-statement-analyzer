@@ -275,10 +275,11 @@ CDK BootstrapのCloudFormation execution roleに、対象環境の運用方針�
 - `rds:DeleteDBSnapshot`: 後片付けに使用したが、最初の`DELETE_FAILED`の直接原因ではない
 
 ```bash
+# 1.のAWSアカウント・リージョン・Stack確認を再実行してから実行する。
 npx cdk destroy --all --force
 ```
 
-再実行でDatabaseStackを含む残りのアプリケーションStackは削除できた。最小権限で運用する場合は、CloudFormation execution roleには`CreateDBSnapshot`（および必要な確認用の`DescribeDBSnapshots`）だけを付与し、`DeleteDBSnapshot`は明示承認を伴う別の運用者権限へ分離する。スナップショットを復旧に利用しない場合でも、destroy成功後に対象識別子を確認してから手動削除する。スナップショット削除は復旧手段を失わせるため、先に保持要否を判断する。
+再実行でDatabaseStackを含む残りのアプリケーションStackは削除できた。上のコマンドを別セッションで実行する場合も、必ず1.のAWSアカウント・リージョン・Stack確認を先に再実行する。最小権限で運用する場合は、CloudFormation execution roleには`CreateDBSnapshot`（および必要な確認用の`DescribeDBSnapshots`）だけを付与し、`DeleteDBSnapshot`は明示承認を伴う別の運用者権限へ分離する。スナップショットを復旧に利用しない場合でも、destroy成功後に対象識別子を確認してから手動削除する。スナップショット削除は復旧手段を失わせるため、先に保持要否を判断する。
 
 #### 再発防止
 
@@ -406,7 +407,10 @@ export AWS_REGION=ap-northeast-1
 export APPLICATION_BUCKET="replace-with-phase13-bucket"
 export APPLICATION_REPOSITORY="ai-statement-analyzer"
 export APPLICATION_VPC_ID="replace-with-phase13-vpc-id"
-export APPLICATION_RESOURCE_PREFIX="replace-with-phase13-resource-prefix"
+export APPLICATION_EIP_ALLOCATION_ID="replace-with-phase13-eip-allocation-id"
+export APPLICATION_ECS_CLUSTER_PREFIX="replace-with-phase13-ecs-cluster-prefix"
+export APPLICATION_ALB_PREFIX="replace-with-phase13-alb-prefix"
+export APPLICATION_SNS_TOPIC_PREFIX="replace-with-phase13-sns-topic-prefix"
 export APPLICATION_LOG_PREFIX="/ai-statement-analyzer/"
 export APPLICATION_SECRET_PREFIX="replace-with-phase13-secret-prefix"
 export APPLICATION_QUEUE_PREFIX="replace-with-phase13-queue-prefix"
@@ -433,10 +437,12 @@ aws ec2 describe-vpc-endpoints --region "$AWS_REGION" \
   --filters Name=vpc-id,Values="$APPLICATION_VPC_ID" --output table
 aws ec2 describe-network-interfaces --region "$AWS_REGION" \
   --filters Name=vpc-id,Values="$APPLICATION_VPC_ID" --output table
+aws ec2 describe-addresses --region "$AWS_REGION" \
+  --allocation-ids "$APPLICATION_EIP_ALLOCATION_ID" --output table
 aws ecs list-clusters --region "$AWS_REGION" --output json \
-  | jq --arg prefix "$APPLICATION_RESOURCE_PREFIX" '[.clusterArns[] | select(startswith($prefix))]'
+  | jq --arg prefix "$APPLICATION_ECS_CLUSTER_PREFIX" '[.clusterArns[] | select(startswith($prefix))]'
 aws elbv2 describe-load-balancers --region "$AWS_REGION" --output json \
-  | jq --arg prefix "$APPLICATION_RESOURCE_PREFIX" '[.LoadBalancers[] | select(.LoadBalancerName | startswith($prefix))]'
+  | jq --arg prefix "$APPLICATION_ALB_PREFIX" '[.LoadBalancers[] | select(.LoadBalancerName | startswith($prefix))]'
 aws logs describe-log-groups --region "$AWS_REGION" \
   --log-group-name-prefix "$APPLICATION_LOG_PREFIX" --output table
 aws secretsmanager list-secrets --region "$AWS_REGION" \
@@ -445,7 +451,7 @@ aws secretsmanager list-secrets --region "$AWS_REGION" \
 aws sqs list-queues --region "$AWS_REGION" \
   --queue-name-prefix "$APPLICATION_QUEUE_PREFIX" --output table
 aws sns list-topics --region "$AWS_REGION" --output json \
-  | jq --arg prefix "$APPLICATION_RESOURCE_PREFIX" '[.Topics[] | select(.TopicArn | contains($prefix)) | .TopicArn]'
+  | jq --arg prefix "$APPLICATION_SNS_TOPIC_PREFIX" '[.Topics[] | select(.TopicArn | contains($prefix)) | .TopicArn]'
 ```
 
 上記の`replace-with-*`は、削除前に記録した実際の識別子へ置き換える。CloudFormation、ECR、RDS、ECS、ALBについても、Phase 13のStack名・リソース名・タグで対象を限定し、共有アカウントの無関係なリソースは削除も失敗判定もしない。
