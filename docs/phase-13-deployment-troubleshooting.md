@@ -1,6 +1,6 @@
 # Phase 13 AWSデプロイ・destroy失敗記録と切り分け手順
 
-Phase 13のAWSデプロイで実際に発生した失敗を、原因、確認方法、修正方法、再発防止策として記録する。
+Phase 13のAWSデプロイとdestroyで実際に発生した失敗を、原因、確認方法、修正方法、再発防止策として記録する。
 
 この文書でいう「権限不足」は、アプリケーションのECS Task Roleではなく、CloudFormationを実行するCDK BootstrapのCloudFormation execution roleに必要なAWS API権限がなかったことを指す。Task Roleの権限不足と混同しない。
 
@@ -260,17 +260,17 @@ DatabaseStackのRDSインスタンスには、削除時に最終スナップシ�
 
 #### 修正
 
-CDK BootstrapのCloudFormation execution roleに、対象環境の運用方針に従って次のRDS権限を付与した後、destroyを再実行した。
+CDK BootstrapのCloudFormation execution roleに、対象環境の運用方針に従ってRDSスナップショット作成権限を付与した後、destroyを再実行した。今回の実行では確認と後片付けも同じRoleで行ったため、次の3権限を追加した。
 
-- `rds:CreateDBSnapshot`
-- `rds:DeleteDBSnapshot`
-- `rds:DescribeDBSnapshots`
+- `rds:CreateDBSnapshot`: CloudFormationによる最終スナップショット作成に必要
+- `rds:DescribeDBSnapshots`: 作成結果の確認に使用
+- `rds:DeleteDBSnapshot`: 後片付けに使用したが、最初の`DELETE_FAILED`の直接原因ではない
 
 ```bash
 npx cdk destroy --all --force
 ```
 
-再実行でDatabaseStackを含む残りのアプリケーションStackは削除できた。スナップショットを復旧に利用しない場合は、destroy成功後に対象識別子を確認してから手動削除する。スナップショット削除は復旧手段を失わせるため、先に保持要否を判断する。
+再実行でDatabaseStackを含む残りのアプリケーションStackは削除できた。最小権限で運用する場合は、CloudFormation execution roleには`CreateDBSnapshot`（および必要な確認用の`DescribeDBSnapshots`）だけを付与し、`DeleteDBSnapshot`は明示承認を伴う別の運用者権限へ分離する。スナップショットを復旧に利用しない場合でも、destroy成功後に対象識別子を確認してから手動削除する。スナップショット削除は復旧手段を失わせるため、先に保持要否を判断する。
 
 #### 再発防止
 
@@ -319,44 +319,88 @@ aws logs delete-log-group --log-group-name <application-log-group>
 
 #### 修正と注意点
 
-他のアプリケーションStackや、同じアカウント・リージョンを使う別のCDKプロジェクトがないことを確認した場合だけ、次の順で削除する。削除すると、次回のCDKデプロイ前に`cdk bootstrap`が必要になる。
+他のアプリケーションStackや、同じアカウント・リージョンを使う別のCDKプロジェクトがないことを確認した場合だけ、次の順で削除する。アカウントやリージョンを取り違えると共有Bootstrapを破壊するため、削除前に次の条件を満たすことを確認する。
 
 ```bash
-aws cloudformation list-stacks \
-  --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE UPDATE_ROLLBACK_COMPLETE
+export AWS_REGION=ap-northeast-1
+aws sts get-caller-identity
 
-aws cloudformation delete-stack --stack-name CDKToolkit
+# DELETE_COMPLETE以外のStackを全件確認する。
+# CDKToolkit以外が1件でも表示されたら、CDKToolkitを削除しない。
+aws cloudformation list-stacks \
+  --region "$AWS_REGION" \
+  --query 'StackSummaries[?StackStatus!=`DELETE_COMPLETE`].[StackName,StackStatus]' \
+  --output table
+
+aws cloudformation delete-stack --stack-name CDKToolkit --region "$AWS_REGION"
+aws cloudformation wait stack-delete-complete \
+  --stack-name CDKToolkit --region "$AWS_REGION"
 ```
+
+`DELETE_FAILED`、`DELETE_IN_PROGRESS`、`CREATE_IN_PROGRESS`などが残っている場合も削除を中止し、先にそのStackの状態と所有者を確認する。`CDKToolkit`を削除すると、次回のCDKデプロイ前に`cdk bootstrap`が必要になる。
 
 BootstrapのS3バケットにオブジェクトが残っている場合、`aws s3 rm --recursive`だけでは不十分なことがある。バージョニングされたバケットでは、古いオブジェクトバージョンとDelete Markerもすべて削除してから、バケットを削除する。
 
 ```bash
-aws s3api list-object-versions --bucket <cdk-bootstrap-bucket>
-# 出力した対象のVersionIdを確認し、VersionsとDeleteMarkersを削除する
-aws s3api delete-object --bucket <cdk-bootstrap-bucket> --key <key> --version-id <version-id>
-aws s3api delete-bucket --bucket <cdk-bootstrap-bucket>
+export CDK_BOOTSTRAP_BUCKET=<cdk-bootstrap-bucket>
+
+# jqが必要。VersionsとDeleteMarkersを全件取得し、空になるまで繰り返す。
+while true; do
+  delete_payload="$(aws s3api list-object-versions \
+    --bucket "$CDK_BOOTSTRAP_BUCKET" \
+    --region "$AWS_REGION" \
+    --output json | jq '{Objects: ((.Versions // []) + (.DeleteMarkers // []) | map({Key, VersionId})), Quiet: true}')"
+  object_count="$(printf '%s' "$delete_payload" | jq '.Objects | length')"
+  [ "$object_count" -eq 0 ] && break
+  aws s3api delete-objects \
+    --bucket "$CDK_BOOTSTRAP_BUCKET" \
+    --region "$AWS_REGION" \
+    --delete "$delete_payload"
+done
+
+aws s3api list-object-versions \
+  --bucket "$CDK_BOOTSTRAP_BUCKET" \
+  --region "$AWS_REGION" \
+  --query '{Versions: Versions, DeleteMarkers: DeleteMarkers}' \
+  --output json
+aws s3api delete-bucket --bucket "$CDK_BOOTSTRAP_BUCKET" --region "$AWS_REGION"
 ```
 
 このバケット削除は、対象がCDK Bootstrap専用であることを確認した場合に限る。CDKを継続利用する場合は`CDKToolkit`を削除せず、Bootstrapリソースを残す。
 
 ### 5. destroy後の課金確認
 
-削除完了後は、CloudFormationのStackだけでなく、次の残存リソースを確認する。検索結果が空であることと、Cost Explorerで継続的な利用が発生していないことを別々に確認する。
+削除完了後は、CloudFormationのStackだけでなく、次の残存リソースを確認する。AWS CLIの確認は対象リージョンごとに行い、S3とCost Explorerはアカウント全体の状態も確認する。検索結果が空であることと、Cost Explorerで継続的な利用が発生していないことを別々に確認する。
 
 ```bash
-aws cloudformation list-stacks --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE
-aws s3api list-buckets
-aws ecr describe-repositories
-aws rds describe-db-instances
-aws rds describe-db-snapshots --snapshot-type manual
-aws ec2 describe-nat-gateways --filter Name=state,Values=pending,available,deleting
-aws ecs list-clusters
-aws elbv2 describe-load-balancers
+export AWS_REGION=ap-northeast-1
+aws sts get-caller-identity
+aws cloudformation list-stacks --region "$AWS_REGION" \
+  --query 'StackSummaries[?StackStatus!=`DELETE_COMPLETE`].[StackName,StackStatus]' \
+  --output table
+aws s3api list-buckets --query 'Buckets[].Name' --output table
+aws ecr describe-repositories --region "$AWS_REGION" --output table
+aws rds describe-db-instances --region "$AWS_REGION" --output table
+aws rds describe-db-snapshots --region "$AWS_REGION" --snapshot-type manual --output table
+aws rds describe-db-cluster-snapshots --region "$AWS_REGION" --snapshot-type manual --output table
+aws ec2 describe-nat-gateways --region "$AWS_REGION" \
+  --filter Name=state,Values=pending,available,deleting --output table
+aws ec2 describe-addresses --region "$AWS_REGION" --output table
+aws ec2 describe-vpc-endpoints --region "$AWS_REGION" --output table
+aws ec2 describe-network-interfaces --region "$AWS_REGION" --output table
+aws ecs list-clusters --region "$AWS_REGION" --output table
+aws elbv2 describe-load-balancers --region "$AWS_REGION" --output table
+aws logs describe-log-groups --region "$AWS_REGION" \
+  --log-group-name-prefix /ai-statement-analyzer/ --output table
+aws secretsmanager list-secrets --region "$AWS_REGION" \
+  --query 'SecretList[].Name' --output table
+aws sqs list-queues --region "$AWS_REGION" --output table
+aws sns list-topics --region "$AWS_REGION" --output table
 ```
 
 Cost Explorerには反映遅延があるため、destroy直後に過去の利用料金が消えるわけではない。今回も削除後の継続リソースは確認されなかったが、実行期間中のS3、Bedrock、Secrets Managerなどの利用料金は履歴として残る。最終確認では、対象リージョンのリソース一覧が空であること、当日以降に新しい利用が増えていないことを時間を置いて確認する。
 
-## 今回の最終確認結果
+## デプロイ時点の最終確認結果
 
 RDS SSL修正後、次を確認してApplicationStackのデプロイを完了した。
 
@@ -367,6 +411,21 @@ RDS SSL修正後、次を確認してApplicationStackのデプロイを完了し
 - Internal ALB `/health`: HTTP 200
 - Internal ALB `/health/db`: HTTP 200、`database: ok`
 - Migration Task: 終了コード0、`migration_completed`
+
+## destroy後の最終確認結果
+
+アプリケーションStackとBootstrap Stackの削除、およびRetainリソースの後片付け後、次の残存リソースがないことを確認した。
+
+- アクティブなCloudFormation Stack: なし
+- S3バケット: なし
+- ECRリポジトリ: なし
+- RDSインスタンス・手動スナップショット: なし
+- NAT Gateway・Elastic IP: なし
+- ECS Cluster・ALB: なし
+- `/ai-statement-analyzer/`配下のCloudWatch Logs: なし
+- SQS Queue・SNS Topic・対象Secrets Manager Secret: なし
+
+Cost Explorerでは確認時点の当日利用額は0だった。一方、削除前のS3、Bedrock、Secrets Managerなどの利用料金は履歴として残るため、destroyによって過去の請求が取り消されるわけではない。
 
 ## 残存する運用上の注意
 
